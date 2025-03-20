@@ -4,28 +4,42 @@ LIST_PROMPTS = {
         "Assistant, please extract the benefits offered to successful candidates of the advertised job(s) from this article, if any. "
         "Return your answer in the following JSON format:\n"
         "{\n"
-        '  "benefit": ["benefit1", "benefit1", "benefit1"] or null\n'
+        '  "benefits": ["benefit1", "benefit1", "benefit1"] or null\n'
         "}"
     ),
     "skills_prompt": (
         "Assistant, please extract the skills required of candidates of the advertised job(s) from this article, if any. "
         "Return your answer in the following JSON format:\n"
         "{\n"
-        '  "skill": ["skill1", "skill2", "skill3"] or null\n'
+        '  "skills": ["skill1", "skill2", "skill3"] or null\n'
         "}"
     ),
     "attributes_prompt": (
         "Assistant, please extract the attributes required of candidates of the advertised job(s) from this article, if any. "
         "Return your answer in the following JSON format:\n"
         "{\n"
-        '  "attribute": ["attribute1", "attribute2", "attribute3"] or null\n'
+        '  "attributes": ["attribute1", "attribute2", "attribute3"] or null\n'
         "}"
     ),
-    "contact_prompt": (
+    "duties_prompt": (
+        "Assistant, please extract the duties and responsibilities that will be required of the candidate as stipulated by this advertised job(s), if any. "
+        "Return your answer in the following JSON format:\n"
+        "{\n"
+        '  "duties": ["duty1", "duty2", "duty3"] or null\n'
+        "}"
+    ),
+    "qualifications_prompt": (
+        "Assistant, please extract the qualifications need of a successful candidate as stipulated by this advertised job(s), if any. "
+        "Return your answer in the following JSON format:\n"
+        "{\n"
+        '  "qualifications": ["qualification1", "qualification2", "qualification3"] or null\n'
+        "}"
+    ),
+    "contacts_prompt": (
         "Assistant, please extract the name of the contact person(s) for this advertised job(s) from this article, if any. "
         "Return your answer in the following JSON format:\n"
         "{\n"
-        '  "contact": ["firstname1 secondname1", "firstname2 secondname2", "firstname2 secondname2"] or null\n'
+        '  "contacts": ["firstname1 secondname1", "firstname2 secondname2", "firstname2 secondname2"] or null\n'
         "}"
     ),
     "recruitment_prompt": (
@@ -61,13 +75,6 @@ NON_LIST_PROMPTS = {
         "Return your answer in the following JSON format:\n"
         "{\n"
         '  "title": "name" or null\n'
-        "}"
-    ),
-    "skill_prompt": (
-        "Assistant, please extract required skill(s) of the advertised job(s) from this article, if any. "
-        "Return your answer in the following JSON format:\n"
-        "{\n"
-        '  "skill": "skill" or null\n'
         "}"
     ),
     "phone_prompt": (

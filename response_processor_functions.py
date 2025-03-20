@@ -43,8 +43,6 @@ class PromptResponseProcessor:
                 self._process_agency(url_id, data)
             elif prompt_type == "job_prompt":
                 self._process_job(url_id, data)
-            elif prompt_type == "skill_prompt":
-                self._process_single_skill(url_id, data)
             elif prompt_type == "phone_prompt":
                 self._process_phone(url_id, data)
             elif prompt_type == "email_prompt":
@@ -57,12 +55,16 @@ class PromptResponseProcessor:
                 self._process_skills(url_id, data)
             elif prompt_type == "attributes_prompt":
                 self._process_attributes(url_id, data)
-            elif prompt_type == "contact_prompt":
+            elif prompt_type == "contacts_prompt":
                 self._process_contacts(url_id, data)
             elif prompt_type == "location_prompt":
                 self._process_location(url_id, data)
             elif prompt_type == "jobadvert_prompt":
                 self._process_job_advert(url_id, data)
+            elif prompt_type == "qualifications_prompt":
+                self._process_qualifications(url_id, data)
+            elif prompt_type == "duties_prompt":
+                self._process_duties(url_id, data)
             else:
                 raise ValueError(f"Unknown prompt type: {prompt_type}")
 
@@ -107,11 +109,6 @@ class PromptResponseProcessor:
         if title:
             self.db.insert_job_title(url_id, title)
 
-    def _process_single_skill(self, url_id: int, data: Dict[str, Any]) -> None:
-        """Process single skill."""
-        skill = data.get("skill")
-        if skill:
-            self.db.insert_skill(url_id, skill)
 
     def _process_phone(self, url_id: int, data: Dict[str, Any]) -> None:
         """Process phone number."""
@@ -133,25 +130,37 @@ class PromptResponseProcessor:
 
     def _process_benefits(self, url_id: int, data: Dict[str, Any]) -> None:
         """Process benefits list."""
-        benefits = data.get("benefit")
+        benefits = data.get("benefits")
         if benefits and isinstance(benefits, list):
             self.db.insert_benefits_list(url_id, benefits)
 
+    def _process_duties(self, url_id: int, data: Dict[str, Any]) -> None:
+        """Process duties list."""
+        duties = data.get("duties")
+        if duties and isinstance(duties, list):
+            self.db.insert_duties_list(url_id, duties)
+
+    def _process_qualifications(self, url_id: int, data: Dict[str, Any]) -> None:
+        """Process qualifications list."""
+        qualifications = data.get("qualifications")
+        if qualifications and isinstance(qualifications, list):
+            self.db.insert_qualifications_list(url_id, qualifications)
+
     def _process_skills(self, url_id: int, data: Dict[str, Any]) -> None:
         """Process skills list."""
-        skills = data.get("skill")
+        skills = data.get("skills")
         if skills and isinstance(skills, list):
             self.db.insert_skills_list(url_id, skills)
 
     def _process_attributes(self, url_id: int, data: Dict[str, Any]) -> None:
         """Process attributes list."""
-        attributes = data.get("attribute")
+        attributes = data.get("attributes")
         if attributes and isinstance(attributes, list):
             self.db.insert_attributes_list(url_id, attributes)
 
     def _process_contacts(self, url_id: int, data: Dict[str, Any]) -> None:
         """Process contact persons list."""
-        contacts = data.get("contact")
+        contacts = data.get("contacts")
         if contacts and isinstance(contacts, list):
             self.db.insert_contact_persons_list(url_id, contacts)
 

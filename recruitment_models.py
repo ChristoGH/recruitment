@@ -26,15 +26,15 @@ class LocationResponse(BaseModel):
 
 
 class ContactPersonResponse(BaseModel):
-    contact: Optional[List[str]] = None  # Changed from 'name' to 'contact' to match processor
+    contacts: Optional[List[str]] = None  # Changed from 'name' to 'contact' to match processor
 
 
 class SkillsResponse(BaseModel):
-    skill: Optional[List[str]] = None  # Changed from 'skills' to 'skill' to match processor
+    skills: Optional[List[str]] = None  # Changed from 'skills' to 'skill' to match processor
 
 
 class AttributesResponse(BaseModel):
-    attribute: Optional[List[str]] = None  # Ensure this is a list
+    attributes: Optional[List[str]] = None  # Ensure this is a list
 
 
 class AgencyResponse(BaseModel):
@@ -46,8 +46,13 @@ class CompanyResponse(BaseModel):
 
 
 class BenefitsResponse(BaseModel):
-    benefit: Optional[List[str]] = None  # Ensure this is a list
+    benefits: Optional[List[str]] = None  # Ensure this is a list
 
+class DutiesResponse(BaseModel):
+    duties: Optional[List[str]] = None  # Ensure this is a list
+
+class QualificationsResponse(BaseModel):
+    qualifications: Optional[List[str]] = None  # Ensure this is a list
 
 class LinkResponse(BaseModel):
     link: Optional[str] = None

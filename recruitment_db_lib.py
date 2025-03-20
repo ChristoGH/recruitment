@@ -15,6 +15,18 @@ from dotenv import load_dotenv
 # Load environment variables
 load_dotenv()
 
+from typing import Dict, List, Any, Optional
+from pydantic import BaseModel
+from datetime import datetime
+
+
+class LinkRecord(BaseModel):
+    """Model for link records."""
+    url_id: int
+    link_url: str
+    link_text: Optional[str] = None
+    link_type: str
+    source_page: Optional[str] = None
 
 @dataclass
 class URLRecord:
@@ -127,6 +139,9 @@ class RecruitmentDatabase:
         self._create_emails_table()
         self._create_phone_numbers_table()
         self._create_location_table()
+        self._create_duties_table()
+        self._create_url_links()
+        self._create_qualifications_table()
 
 
     def _create_urls_table(self) -> None:
@@ -297,6 +312,20 @@ class RecruitmentDatabase:
         with self._execute_query(query):
             self.logger.info("Table 'contact_person' created or verified.")
 
+    def _create_duties_table(self) -> None:
+        """Create the 'duties' table."""
+        query = """
+            CREATE TABLE IF NOT EXISTS duties (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url_id INTEGER NOT NULL,
+                duty TEXT NOT NULL,
+                UNIQUE (url_id, duty),
+                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
+            )
+        """
+        with self._execute_query(query):
+            self.logger.info("Table 'duties' created or verified.")
+
     def _create_benefits_table(self) -> None:
         """Create the 'benefits' table."""
         query = """
@@ -356,6 +385,19 @@ class RecruitmentDatabase:
         with self._execute_query(query):
             self.logger.info("Table 'attributes' created or verified.")
 
+    def _create_qualifications_table(self) -> None:
+        """Create the 'qualifications' table."""
+        query = """
+            CREATE TABLE IF NOT EXISTS qualifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url_id INTEGER NOT NULL,
+                qualification TEXT NOT NULL,
+                UNIQUE (url_id, qualification),
+                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
+            )
+        """
+        with self._execute_query(query):
+            self.logger.info("Table 'qualification' created or verified.")
 
     def _create_job_table(self) -> None:
         """Create the 'job_adverts' table."""
@@ -373,6 +415,37 @@ class RecruitmentDatabase:
         """
         with self._execute_query(query):
             self.logger.info("Table 'job_adverts' created or verified.")
+
+    def _create_url_links(self):
+        """Create the 'url_links' table to store links extracted from webpages."""
+        # Create the table first
+        table_query = """
+            CREATE TABLE IF NOT EXISTS url_links (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url_id INTEGER NOT NULL,
+                link_url TEXT NOT NULL,
+                link_text TEXT,
+                link_type TEXT NOT NULL,
+                source_page TEXT,
+                UNIQUE (url_id, link_url, link_type),
+                FOREIGN KEY (url_id) REFERENCES urls(id) ON DELETE CASCADE ON UPDATE CASCADE
+            )
+        """
+        with self._execute_query(table_query):
+            self.logger.info("Table 'url_links' created or verified.")
+
+        # Create the indexes separately
+        index_query1 = """
+            CREATE INDEX IF NOT EXISTS idx_url_links_url_id ON url_links(url_id)
+        """
+        with self._execute_query(index_query1):
+            self.logger.info("Index 'idx_url_links_url_id' created or verified.")
+
+        index_query2 = """
+            CREATE INDEX IF NOT EXISTS idx_url_links_link_type ON url_links(link_type)
+        """
+        with self._execute_query(index_query2):
+            self.logger.info("Index 'idx_url_links_link_type' created or verified.")
 
     def _create_job_advert_table(self) -> None:
         """Create the 'job_advert_forms' table to store job posting details."""
@@ -472,6 +545,45 @@ class RecruitmentDatabase:
                 record.get("content")
         )):
             self.logger.info(f"Inserted URL: {url_record.url}")
+
+    def insert_url_links(self, url_id: int, links: Dict[str, List[Dict[str, str]]]) -> None:
+        """
+        Insert links extracted from a webpage into the database.
+
+        Args:
+            url_id: The ID of the URL in the database
+            links: Dictionary of links organized by type (internal/external)
+        """
+        try:
+            for link_type, link_list in links.items():
+                for link in link_list:
+                    link_record = LinkRecord(
+                        url_id=url_id,
+                        link_url=link.get('href', ''),
+                        link_text=link.get('text'),
+                        link_type=link_type,
+                        source_page=link.get('source_page')
+                    )
+
+                    query = """
+                        INSERT INTO url_links
+                        (url_id, link_url, link_text, link_type, source_page)
+                        VALUES (?, ?, ?, ?, ?)
+                    """
+                    with self._execute_query(query, (
+                            link_record.url_id,
+                            link_record.link_url,
+                            link_record.link_text,
+                            link_record.link_type,
+                            link_record.source_page
+                    )):
+                        pass  # The context manager handles commits and rollbacks
+
+            self.logger.info(
+                f"Inserted {sum(len(link_list) for link_list in links.values())} links for URL ID: {url_id}")
+        except Exception as e:
+            self.logger.error(f"Error inserting links for URL ID {url_id}: {e}")
+            raise DatabaseError(f"Error inserting links: {e}")
 
     def update_content(self, url: str, content: str) -> None:
         """
@@ -612,6 +724,19 @@ class RecruitmentDatabase:
         query = "INSERT INTO jobskills (url_id, name) VALUES (?, ?)"
         with self._execute_query(query, (url_id, skill)):
             self.logger.info(f"Inserted job skill for URL ID {url_id}")
+
+    def insert_qualification(self, url_id: int, qualification: str) -> None:
+        """
+        Insert a qualification record.
+
+        Args:
+            url_id: Associated URL ID.
+            qualification: Job qualification.
+        """
+        query = "INSERT INTO qualifications (url_id, qualification) VALUES (?, ?)"
+        with self._execute_query(query, (url_id, qualification)):
+            self.logger.info(f"Inserted qualification for URL ID {url_id}")
+
 
     def insert_candidate(self, url_id: int, name: str) -> None:
         """
@@ -796,6 +921,18 @@ class RecruitmentDatabase:
         with self._execute_query(query, (url_id, benefit)):
             self.logger.info(f"Inserted benefit '{benefit}' for URL ID {url_id}")
 
+    def insert_duty(self, url_id: int, duty: str) -> None:
+        """
+        Insert a duty record.
+
+        Args:
+            url_id: Associated URL ID.
+            duty: Job duty.
+        """
+        query = "INSERT OR IGNORE INTO duties (url_id, duty) VALUES (?, ?)"
+        with self._execute_query(query, (url_id, duty)):
+            self.logger.info(f"Inserted duty '{duty}' for URL ID {url_id}")
+
 
     def insert_attribute(self, url_id: int, attribute: str) -> None:
         """
@@ -956,6 +1093,19 @@ class RecruitmentDatabase:
         for benefit in benefits:
             self.insert_benefit(url_id, benefit)
 
+    def insert_duties_list(self, url_id: int, duties: list) -> None:
+        """
+        Insert multiple duties for a URL.
+
+        Args:
+            url_id: Associated URL ID.
+            duties: List of duties.
+        """
+        if not duties:
+            return
+
+        for duty in duties:
+            self.insert_duty(url_id, duty)
 
     def insert_recruitment_evidence_list(self, url_id: int, evidence_list: list) -> None:
         """

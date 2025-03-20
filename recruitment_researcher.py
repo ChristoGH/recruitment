@@ -1,18 +1,9 @@
 #!/usr/bin/env python3
 """
-Recruitment Project recruitment_researcher Script
+Recruitment Researcher
 
 This script processes URLs to extract job recruitment data using LLMs and stores the results in a database.
-
-# Process URLs from CSV files
-python recruitment_researcher.py --csv-dir recruitment_output --max-urls 50
-
-# Process a single URL
-python recruitment_researcher.py --single-url https://career27.co.za/2025/03/13/philips-south-africa-internship-programme-2025-2/
-
-# Start from a specific index and process all prompts
-python recruitment_researcher.py --start-index 100 --process-all
-
+It uses web_crawler_lib for content extraction.
 """
 
 import argparse
@@ -26,17 +17,12 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 
 import pandas as pd
-import requests
 import tldextract
-from bs4 import BeautifulSoup
-from dotenv import load_dotenv
 from llama_index.core import Document as liDocument
 from llama_index.core import VectorStoreIndex
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.llms.openai import OpenAI
-from newspaper import Article
-from pydantic import BaseModel
-from readability import Document
+from dotenv import load_dotenv
 
 # Local imports
 from get_urls_from_csvs import get_unique_urls_from_csvs
@@ -44,9 +30,10 @@ from prompts import COMPLEX_PROMPTS, LIST_PROMPTS, NON_LIST_PROMPTS
 from recruitment_db_lib import DatabaseError, RecruitmentDatabase
 from recruitment_models import (AgencyResponse, AttributesResponse, BenefitsResponse,
                                 CompanyResponse, ConfirmResponse, ContactPersonResponse,
-                                EmailResponse, JobAdvertResponse, JobResponse,LinkResponse,
-                                LocationResponse, PhoneNumberResponse, SkillsResponse)
+                                EmailResponse, JobAdvertResponse, JobResponse,
+                                LocationResponse, PhoneNumberResponse, LinkResponse, SkillsResponse)
 from response_processor_functions import PromptResponseProcessor
+from web_crawler_lib import crawl_website_sync, WebCrawlerResult
 
 # Load environment variables
 load_dotenv()
@@ -61,17 +48,6 @@ logging.basicConfig(
     level=logging.INFO,
 )
 logger = logging.getLogger(__name__)
-
-# Constants
-MIN_TEXT_LENGTH = 100  # minimum text length to consider content valid
-
-# Optional selenium import
-try:
-    from selenium import webdriver
-    from selenium.webdriver.chrome.options import Options
-except ImportError:
-    webdriver = None
-    logger.warning("Selenium not installed. Will not use Selenium fallback for URL extraction.")
 
 
 def setup_llm_engine(api_key: Optional[str] = None) -> Tuple[OpenAI, ChatMemoryBuffer]:
@@ -88,225 +64,10 @@ def setup_llm_engine(api_key: Optional[str] = None) -> Tuple[OpenAI, ChatMemoryB
         os.environ["OPENAI_API_KEY"] = api_key
 
     # Initialize LLM with conservative settings
-    llm = OpenAI(temperature=0, model="o3-mini", request_timeout=120.0)
+    llm = OpenAI(temperature=0, model="gpt-4o-mini", request_timeout=120.0)
     memory = ChatMemoryBuffer.from_defaults(token_limit=3000)
 
     return llm, memory
-
-
-def is_url_accessible(url: str) -> bool:
-    """
-    Check if a URL is accessible using Selenium.
-
-    Args:
-        url: The URL to check
-
-    Returns:
-        True if accessible, False otherwise
-    """
-    if webdriver is None:
-        # If Selenium is not available, try a simple request
-        try:
-            headers = {
-                "User-Agent": (
-                    "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                    "AppleWebKit/537.36 (KHTML, like Gecko) "
-                    "Chrome/90.0.4430.85 Safari/537.36"
-                )
-            }
-            response = requests.get(url, headers=headers, timeout=10)
-            return response.status_code == 200
-        except Exception as e:
-            logger.error(f"Exception for URL {url}: {e}")
-            return False
-
-    # Use Selenium if available
-    chrome_options = Options()
-    chrome_options.add_argument("--headless")
-    chrome_options.add_argument("--disable-gpu")
-    chrome_options.add_argument("user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                                "Chrome/90.0.4430.85 Safari/537.36")
-    try:
-        driver = webdriver.Chrome(options=chrome_options)
-        driver.get(url)
-        # You may want to wait for certain elements if needed
-        status = driver.title != ""  # simple check: did the page load?
-        driver.quit()
-        return status
-    except Exception as e:
-        logger.error(f"Exception for URL {url}: {e}")
-        return False
-
-
-def extract_with_newspaper(url: str) -> str:
-    """
-    Try to extract the article text using newspaper3k.
-
-    Args:
-        url: The URL to extract text from
-
-    Returns:
-        Extracted text or empty string if extraction fails
-    """
-    try:
-        article = Article(url)
-        article.download()
-        article.parse()
-        text = article.text.strip()
-        if len(text) >= MIN_TEXT_LENGTH:
-            logger.info("Article extracted successfully using newspaper3k.")
-            return text
-        else:
-            logger.warning("Newspaper3k extraction returned insufficient text.")
-    except Exception as e:
-        logger.error(f"Error using newspaper3k for {url}: {e}")
-    return ""
-
-
-def extract_with_readability(url: str) -> str:
-    """
-    Fetch the page with requests and extract text using readability-lxml.
-
-    Args:
-        url: The URL to extract text from
-
-    Returns:
-        Extracted text or empty string if extraction fails
-    """
-    try:
-        headers = {
-            "User-Agent": (
-                "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-                "AppleWebKit/537.36 (KHTML, like Gecko) "
-                "Chrome/90.0.4430.85 Safari/537.36"
-            )
-        }
-        response = requests.get(url, headers=headers, timeout=10)
-        if response.status_code != 200:
-            logger.error(f"Requests returned status code {response.status_code} for {url}")
-            return ""
-        doc = Document(response.text)
-        # The summary() method returns the main content as HTML.
-        summary_html = doc.summary()
-        soup = BeautifulSoup(summary_html, "html.parser")
-        text = soup.get_text(separator="\n").strip()
-        if len(text) >= MIN_TEXT_LENGTH:
-            logger.info("Article extracted successfully using readability-lxml.")
-            return text
-        else:
-            logger.warning("Readability extraction returned insufficient text.")
-    except Exception as e:
-        logger.error(f"Error using readability for {url}: {e}")
-    return ""
-
-
-def extract_with_selenium(url: str) -> str:
-    """
-    Render the page with Selenium and extract the main content.
-    Uses webdriver_manager for automatic ChromeDriver management.
-
-    Args:
-        url: The URL to extract text from
-
-    Returns:
-        Extracted text or empty string if extraction fails
-    """
-    try:
-        from selenium import webdriver
-        from selenium.webdriver.chrome.service import Service
-        from selenium.webdriver.chrome.options import Options
-        from webdriver_manager.chrome import ChromeDriverManager
-        from readability import Document
-        from bs4 import BeautifulSoup
-        import time
-    except ImportError as e:
-        logger.error(f"Required module not installed: {e}")
-        return ""
-
-    try:
-        # Set up Chrome options
-        chrome_options = Options()
-        chrome_options.add_argument("--headless")
-        chrome_options.add_argument("--disable-gpu")
-        chrome_options.add_argument(
-            "user-agent=Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/90.0.4430.85 Safari/537.36"
-        )
-
-        # Use webdriver_manager to automatically download and manage the correct ChromeDriver version
-        service = Service(ChromeDriverManager().install())
-
-        # Initialize the driver with the service and options
-        driver = webdriver.Chrome(service=service, options=chrome_options)
-
-        # Add timeout for page load
-        driver.set_page_load_timeout(30)
-
-        # Get the page
-        driver.get(url)
-
-        # Allow time for dynamic content to load
-        time.sleep(3)
-
-        # Get page source and close driver
-        html = driver.page_source
-        driver.quit()
-
-        # Extract content with readability
-        doc = Document(html)
-        summary_html = doc.summary()
-        soup = BeautifulSoup(summary_html, "html.parser")
-        text = soup.get_text(separator="\n").strip()
-
-        if len(text) >= MIN_TEXT_LENGTH:
-            logger.info("Article extracted successfully using Selenium with readability.")
-            return text
-        else:
-            # Try to extract content directly if readability fails
-            body_content = driver.find_element_by_tag_name("body").text
-            if len(body_content) >= MIN_TEXT_LENGTH:
-                logger.info("Article extracted successfully using Selenium directly.")
-                return body_content
-            else:
-                logger.warning("Selenium extraction returned insufficient text.")
-    except Exception as e:
-        logger.error(f"Error using Selenium for {url}: {e}")
-        # Make sure to quit the driver in case of exception
-        try:
-            if 'driver' in locals():
-                driver.quit()
-        except:
-            pass
-    return ""
-
-
-def extract_main_text(url: str) -> str:
-    """
-    Extracts the main text from an article URL using multiple fallback methods.
-
-    Args:
-        url: The URL to extract text from
-
-    Returns:
-        Extracted text or empty string if all extraction methods fail
-    """
-    logger.info(f"Attempting to extract article text from {url}")
-
-    # First attempt: newspaper3k
-    text = extract_with_newspaper(url)
-    if text:
-        return text
-
-    # Second attempt: requests + readability-lxml
-    text = extract_with_readability(url)
-    if text:
-        return text
-
-    # Third attempt: Selenium (if available)
-    text = extract_with_selenium(url)
-    return text
 
 
 def get_validated_response(prompt_key: str, prompt_text: str, model_class: Any, chat_engine) -> Optional[Any]:
@@ -343,14 +104,6 @@ def get_validated_response(prompt_key: str, prompt_text: str, model_class: Any, 
         except json.JSONDecodeError as e:
             logger.error(f"JSON decoding failed for '{prompt_key}': {e}")
             # Retry with the next attempt rather than returning None immediately
-        except requests.exceptions.RequestException as e:
-            logger.error(f"Request error for '{prompt_key}': {e}")
-            # Handle rate limiting
-            if "429" in str(e):
-                delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
-                logger.warning(f"Rate limit hit. Retrying in {delay:.2f} seconds...")
-                time.sleep(delay)
-                continue
         except Exception as e:
             if "429 Too Many Requests" in str(e):
                 delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
@@ -416,6 +169,36 @@ def verify_recruitment(url: str, chat_engine) -> Tuple[Dict[str, Any], List[str]
         return result, incidents
 
 
+def get_model_class_for_prompt(prompt_key: str) -> Optional[Any]:
+    """
+    Get the appropriate Pydantic model class for a prompt key.
+
+    Args:
+        prompt_key: The prompt key
+
+    Returns:
+        The corresponding Pydantic model class or None if not found
+    """
+    # Mapping from prompt keys to model classes
+    model_map = {
+        "recruitment_prompt": ConfirmResponse,
+        "company_prompt": CompanyResponse,
+        "agency_prompt": AgencyResponse,
+        "job_prompt": JobResponse,
+        "skills_prompt": SkillsResponse,
+        "attributes_prompt": AttributesResponse,
+        "contact_prompt": ContactPersonResponse,
+        "benefits_prompt": BenefitsResponse,
+        "phone_prompt": PhoneNumberResponse,
+        "email_prompt": EmailResponse,
+        "link_prompt": LinkResponse,
+        "location_prompt": LocationResponse,
+        "jobadvert_prompt": JobAdvertResponse
+    }
+
+    return model_map.get(prompt_key)
+
+
 def process_url(url: str, db: RecruitmentDatabase, processor: PromptResponseProcessor, llm: OpenAI,
                 memory: ChatMemoryBuffer, process_all_prompts: bool = True) -> bool:
     """
@@ -434,17 +217,24 @@ def process_url(url: str, db: RecruitmentDatabase, processor: PromptResponseProc
     """
     logger.info(f"Processing URL: {url}")
 
-    # Check accessibility
-    if not is_url_accessible(url):
-        logger.warning(f"URL not accessible: {url}")
+    # Extract content using web_crawler_lib
+    crawl_result = crawl_website_sync(
+        url=url,
+        excluded_tags=['form', 'header'],
+        verbose=True
+    )
+
+    if not crawl_result.success:
+        logger.warning(f"Failed to extract content from URL: {url}")
         # Record the URL in the database as inaccessible
         result = {
             "url": url,
             "domain_name": tldextract.extract(url).domain,
-            "source": "google_search",
-            "content": "",  # No content because URL is inaccessible
+            "source": "crawler",
+            "content": "",  # No content because extraction failed
             "recruitment_flag": -1,  # Use a default status indicating not processed
-            "accessible": 0
+            "accessible": 0,
+            "error_message": crawl_result.error_message
         }
         db.insert_url(result)
         return False
@@ -453,18 +243,18 @@ def process_url(url: str, db: RecruitmentDatabase, processor: PromptResponseProc
     extracted = tldextract.extract(url)
     domain_name = extracted.domain
 
-    # Extract main text
-    text = extract_main_text(url)
+    # Use the markdown content from the crawler
+    text = crawl_result.markdown
     if not text:
-        logger.warning(f"Failed to extract text from URL: {url}")
+        logger.warning(f"Empty content extracted from URL: {url}")
         result = {
             "url": url,
             "domain_name": domain_name,
-            "source": "google_search",
+            "source": "crawler",
             "content": "",
             "recruitment_flag": -1,
-            "accessible": 1,  # URL was accessible but extraction failed
-            "error_message": "Failed to extract content"
+            "accessible": 1,  # URL was accessible but extraction yielded no content
+            "error_message": "Empty content extracted"
         }
         db.insert_url(result)
         return False
@@ -473,7 +263,7 @@ def process_url(url: str, db: RecruitmentDatabase, processor: PromptResponseProc
     result = {
         "url": url,
         "domain_name": domain_name,
-        "source": "google_search",
+        "source": "crawler",
         "content": text,
         "recruitment_flag": -1,  # default value until verified
         "accessible": 1
@@ -501,6 +291,8 @@ def process_url(url: str, db: RecruitmentDatabase, processor: PromptResponseProc
         # Insert URL into database
         db.insert_url(result)
         url_id = db.get_url_id(url)
+        if url_id is not None and crawl_result.links:
+            db.insert_url_links(url_id, crawl_result.links)
 
         if url_id is None:
             logger.error(f"Failed to retrieve URL ID for {url}")
@@ -563,36 +355,6 @@ def process_url(url: str, db: RecruitmentDatabase, processor: PromptResponseProc
     except Exception as e:
         logger.error(f"Error processing URL {url}: {e}")
         return False
-
-
-def get_model_class_for_prompt(prompt_key: str) -> Optional[BaseModel]:
-    """
-    Get the appropriate Pydantic model class for a prompt key.
-
-    Args:
-        prompt_key: The prompt key
-
-    Returns:
-        The corresponding Pydantic model class or None if not found
-    """
-    # Mapping from prompt keys to model classes
-    model_map = {
-        "recruitment_prompt": ConfirmResponse,
-        "company_prompt": CompanyResponse,
-        "agency_prompt": AgencyResponse,
-        "job_prompt": JobResponse,
-        "skills_prompt": SkillsResponse,
-        "attributes_prompt": AttributesResponse,
-        "contact_prompt": ContactPersonResponse,
-        "benefits_prompt": BenefitsResponse,
-        "phone_prompt": PhoneNumberResponse,
-        "email_prompt": EmailResponse,
-        "link_prompt": LinkResponse,  # Fixed: Changed from EmailResponse to LinkResponse
-        "location_prompt": LocationResponse,
-        "jobadvert_prompt": JobAdvertResponse
-    }
-
-    return model_map.get(prompt_key)
 
 
 def main():
