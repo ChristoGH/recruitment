@@ -77,7 +77,7 @@ NON_LIST_PROMPTS = {
         '  "title": "name" or null\n'
         "}"
     ),
-    "phone_prompt": (
+    "company_phone_number_prompt": (
         "Assistant, please extract the contact phone number of the advertised job(s) from this article, if any. "
         "Return your answer in the following JSON format:\n"
         "{\n"

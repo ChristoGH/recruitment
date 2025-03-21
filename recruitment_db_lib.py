@@ -137,7 +137,7 @@ class RecruitmentDatabase:
         self._create_job_advert_table()
         self._create_links_table()
         self._create_emails_table()
-        self._create_phone_numbers_table()
+        self._create_company_phone_numbers_table()
         self._create_location_table()
         self._create_duties_table()
         self._create_url_links()
@@ -165,11 +165,12 @@ class RecruitmentDatabase:
         with self._execute_query(query):
             self.logger.info("Table 'urls' created or verified.")
 
+    # Fix for _create_company_table method
     def _create_company_table(self) -> None:
         """Create tables related to hiring companies."""
-        # Hiring Company table
+        # Change table name from hiring_company to company
         query_company = """
-            CREATE TABLE IF NOT EXISTS hiring_company (
+            CREATE TABLE IF NOT EXISTS company (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url_id INTEGER NOT NULL,
                 name TEXT NOT NULL,
@@ -179,11 +180,11 @@ class RecruitmentDatabase:
             )
         """
         with self._execute_query(query_company):
-            self.logger.info("Table 'hiring_company' created or verified.")
+            self.logger.info("Table 'company' created or verified.")
 
-        # Address table
+        # Update related table names to be consistent
         query_address = """
-            CREATE TABLE IF NOT EXISTS hiring_company_address (
+            CREATE TABLE IF NOT EXISTS company_address (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url_id INTEGER NOT NULL,
                 address TEXT NOT NULL,
@@ -192,11 +193,11 @@ class RecruitmentDatabase:
             )
         """
         with self._execute_query(query_address):
-            self.logger.info("Table 'hiring_company_address' created or verified.")
+            self.logger.info("Table 'company_address' created or verified.")
 
-        # Email table
+        # Update other company-related tables similarly
         query_email = """
-            CREATE TABLE IF NOT EXISTS hiring_company_email (
+            CREATE TABLE IF NOT EXISTS company_email (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url_id INTEGER NOT NULL,
                 email TEXT NOT NULL,
@@ -205,11 +206,11 @@ class RecruitmentDatabase:
             )
         """
         with self._execute_query(query_email):
-            self.logger.info("Table 'hiring_company_email' created or verified.")
+            self.logger.info("Table 'company_email' created or verified.")
 
-        # Phone table
+        # Update phone table
         query_phone = """
-            CREATE TABLE IF NOT EXISTS hiring_company_phone (
+            CREATE TABLE IF NOT EXISTS company_phone (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url_id INTEGER NOT NULL,
                 phone TEXT NOT NULL,
@@ -218,7 +219,26 @@ class RecruitmentDatabase:
             )
         """
         with self._execute_query(query_phone):
-            self.logger.info("Table 'hiring_company_phone' created or verified.")
+            self.logger.info("Table 'company_phone' created or verified.")
+
+    # Fix for _create_job_table method to use correct table references
+    def _create_job_table(self) -> None:
+        """Create the 'job_adverts' table with correct foreign key references."""
+        query = """
+            CREATE TABLE IF NOT EXISTS job_adverts (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url_id INTEGER NOT NULL,
+                company_id INTEGER, 
+                recruiter_id INTEGER,
+                title TEXT,
+                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE,
+                FOREIGN KEY (company_id) REFERENCES company (id) ON DELETE SET NULL ON UPDATE CASCADE,
+                FOREIGN KEY (recruiter_id) REFERENCES recruiter (id) ON DELETE SET NULL ON UPDATE CASCADE
+            )
+        """
+        with self._execute_query(query):
+            self.logger.info("Table 'job_adverts' created or verified.")
+
 
     def _create_agency_table(self) -> None:
         """Create the 'agency' table."""
@@ -272,8 +292,9 @@ class RecruitmentDatabase:
 
     def _create_emails_table(self) -> None:
         """Create the 'emails' table."""
-        query = """
-            CREATE TABLE IF NOT EXISTS emails (
+        # Update other company-related tables similarly
+        query_email = """
+            CREATE TABLE IF NOT EXISTS email (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url_id INTEGER NOT NULL,
                 email TEXT NOT NULL,
@@ -281,22 +302,22 @@ class RecruitmentDatabase:
                 FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """
-        with self._execute_query(query):
-            self.logger.info("Table 'emails' created or verified.")
+        with self._execute_query(query_email):
+            self.logger.info("Table 'company_email' created or verified.")
 
-    def _create_phone_numbers_table(self) -> None:
+    def _create_company_phone_numbers_table(self) -> None:
         """Create the 'skills' table."""
-        query = """
-            CREATE TABLE IF NOT EXISTS phone_numbers (
+        query_phone = """
+            CREATE TABLE IF NOT EXISTS company_phone (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url_id INTEGER NOT NULL,
-                number TEXT NOT NULL,
-                UNIQUE (url_id, number),
+                phone TEXT NOT NULL,
+                UNIQUE (url_id, phone),
                 FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """
-        with self._execute_query(query):
-            self.logger.info("Table 'phone_numbers' created or verified.")
+        with self._execute_query(query_phone):
+            self.logger.info("Table 'company_phone' created or verified.")
 
     def _create_contact_person_table(self) -> None:
         """Create the 'contact_person' table."""
@@ -385,36 +406,6 @@ class RecruitmentDatabase:
         with self._execute_query(query):
             self.logger.info("Table 'attributes' created or verified.")
 
-    def _create_qualifications_table(self) -> None:
-        """Create the 'qualifications' table."""
-        query = """
-            CREATE TABLE IF NOT EXISTS qualifications (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url_id INTEGER NOT NULL,
-                qualification TEXT NOT NULL,
-                UNIQUE (url_id, qualification),
-                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
-            )
-        """
-        with self._execute_query(query):
-            self.logger.info("Table 'qualification' created or verified.")
-
-    def _create_job_table(self) -> None:
-        """Create the 'job_adverts' table."""
-        query = """
-            CREATE TABLE IF NOT EXISTS job_adverts (
-                id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url_id INTEGER NOT NULL,
-                hiring_company_id INTEGER,
-                recruiter_id INTEGER,
-                title TEXT,
-                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE,
-                FOREIGN KEY (hiring_company_id) REFERENCES company (id) ON DELETE SET NULL ON UPDATE CASCADE,
-                FOREIGN KEY (recruiter_id) REFERENCES recruiter (id) ON DELETE SET NULL ON UPDATE CASCADE
-            )
-        """
-        with self._execute_query(query):
-            self.logger.info("Table 'job_adverts' created or verified.")
 
     def _create_url_links(self):
         """Create the 'url_links' table to store links extracted from webpages."""
@@ -818,18 +809,6 @@ class RecruitmentDatabase:
 
 # Insert methods for all the different prompt types
 
-    def insert_company(self, url_id: int, company_name: str) -> None:
-        """
-        Insert a company record.
-
-        Args:
-            url_id: Associated URL ID.
-            company_name: Company name.
-        """
-        query = "INSERT OR IGNORE INTO company (url_id, name) VALUES (?, ?)"
-        with self._execute_query(query, (url_id, company_name)):
-            self.logger.info(f"Inserted company '{company_name}' for URL ID {url_id}")
-
 
     def insert_agency(self, url_id: int, agency_name: str) -> None:
         """
@@ -870,7 +849,7 @@ class RecruitmentDatabase:
             self.logger.info(f"Inserted skill '{skill}' for URL ID {url_id}")
 
 
-    def insert_phone_number(self, url_id: int, number: str) -> None:
+    def insert_company_phone_number(self, url_id: int, number: str) -> None:
         """
         Insert a phone number record.
 
@@ -878,7 +857,7 @@ class RecruitmentDatabase:
             url_id: Associated URL ID.
             number: Phone number.
         """
-        query = "INSERT OR IGNORE INTO phone_numbers (url_id, number) VALUES (?, ?)"
+        query = "INSERT OR IGNORE INTO company_phone (url_id, number) VALUES (?, ?)"
         with self._execute_query(query, (url_id, number)):
             self.logger.info(f"Inserted phone number for URL ID {url_id}")
 
@@ -1120,3 +1099,478 @@ class RecruitmentDatabase:
 
         for evidence in evidence_list:
             self.insert_recruitment_evidence(url_id, evidence)
+
+    # Fix _create_qualifications_table to use consistent table name in comment
+    def _create_qualifications_table(self) -> None:
+        """Create the 'qualifications' table."""
+        query = """
+            CREATE TABLE IF NOT EXISTS qualifications (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                url_id INTEGER NOT NULL,
+                qualification TEXT NOT NULL,
+                UNIQUE (url_id, qualification),
+                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
+            )
+        """
+        with self._execute_query(query):
+            self.logger.info("Table 'qualifications' created or verified.")
+
+
+    def insert_qualifications_list(self, url_id: int, qualifications: list) -> None:
+        """
+        Insert multiple qualifications for a URL.
+
+        Args:
+            url_id: Associated URL ID.
+            qualifications: List of qualifications.
+        """
+        if not qualifications:
+            return
+
+        for qualification in qualifications:
+            self.insert_qualification(url_id, qualification)
+
+
+    # Ensure that company-related methods have consistent naming
+    def insert_company(self, url_id: int, company_name: str) -> None:
+        """
+        Insert a company record.
+
+        Args:
+            url_id: Associated URL ID.
+            company_name: Company name.
+        """
+        query = "INSERT OR IGNORE INTO company (url_id, name) VALUES (?, ?)"
+        with self._execute_query(query, (url_id, company_name)):
+            self.logger.info(f"Inserted company '{company_name}' for URL ID {url_id}")
+
+
+    # Add missing method to get or create a company ID
+    def get_company_id(self, url_id: int, name: str) -> Optional[int]:
+        """
+        Retrieve the company ID for a given URL and company name.
+
+        Args:
+            url_id: URL record ID.
+            name: Company name.
+        """
+        query = "SELECT id FROM company WHERE url_id = ? AND name = ?"
+        with self._execute_query(query, (url_id, name)) as cursor:
+            row = cursor.fetchone()
+            if row:
+                return row[0]
+
+            # If company doesn't exist, create it
+            insert_query = "INSERT INTO company (url_id, name) VALUES (?, ?)"
+            with self._execute_query(insert_query, (url_id, name)) as cursor:
+                return cursor.lastrowid
+
+    @contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        """
+        Context manager for database transactions.
+        Ensures that multiple operations either all succeed or all fail.
+
+        Yields:
+            sqlite3.Connection: An active database connection
+
+        Raises:
+            DatabaseError: If there's an issue with the database connection or transaction
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("PRAGMA foreign_keys = ON;")
+            yield conn
+            conn.commit()
+            self.logger.debug("Transaction committed successfully")
+        except sqlite3.Error as e:
+            conn.rollback()
+            error_msg = f"Transaction failed and was rolled back: {e}"
+            self.logger.error(error_msg)
+            raise DatabaseError(error_msg) from e
+        except Exception as e:
+            conn.rollback()
+            error_msg = f"Unexpected error during transaction, rolled back: {e}"
+            self.logger.error(error_msg)
+            raise DatabaseError(error_msg) from e
+        finally:
+            conn.close()
+
+    def _execute_in_transaction(self, queries_and_params: List[tuple]) -> None:
+        """
+        Execute multiple queries in a single transaction.
+
+        Args:
+            queries_and_params: List of (query, params) tuples to execute
+
+        Raises:
+            DatabaseError: If any query fails
+        """
+        if not queries_and_params:
+            return
+
+        with self._transaction() as conn:
+            cursor = conn.cursor()
+            for query, params in queries_and_params:
+                cursor.execute(query, params)
+                self.logger.debug(f"Executed query in transaction: {query}")
+
+    # Example refactored method using transactions
+    def insert_location(self, url_id: int, country: str = None, province: str = None,
+                        city: str = None, street_address: str = None) -> None:
+        """
+        Insert a location record.
+
+        Args:
+            url_id: Associated URL ID.
+            country: Country name (optional).
+            province: Province/state name (optional).
+            city: City name (optional).
+            street_address: Street address (optional).
+        """
+        if not any([country, province, city, street_address]):
+            return
+
+        query = """
+            INSERT OR IGNORE INTO location 
+            (url_id, country, province, city, street_address) 
+            VALUES (?, ?, ?, ?, ?)
+        """
+
+        # Execute as a single operation
+        with self._execute_query(query, (url_id, country, province, city, street_address)):
+            self.logger.info(f"Inserted location information for URL ID {url_id}")
+
+    # Example of a method handling multiple related inserts in a transaction
+    def insert_job_with_details(self, url_id: int, job_title: str,
+                                company_name: Optional[str] = None,
+                                description: Optional[str] = None,
+                                salary: Optional[str] = None) -> None:
+        """
+        Insert a job posting with its details in a single transaction.
+
+        Args:
+            url_id: Associated URL ID.
+            job_title: Job title.
+            company_name: Company name (optional).
+            description: Job description (optional).
+            salary: Salary information (optional).
+        """
+        operations = []
+
+        # Add job title insert operation
+        operations.append((
+            "INSERT OR IGNORE INTO job_adverts (url_id, title) VALUES (?, ?)",
+            (url_id, job_title)
+        ))
+
+        # Add company name if provided
+        if company_name:
+            operations.append((
+                "INSERT OR IGNORE INTO company (url_id, name) VALUES (?, ?)",
+                (url_id, company_name)
+            ))
+
+            # If we have both title and company, link them
+            operations.append((
+                """UPDATE job_adverts SET company_id = 
+                   (SELECT id FROM company WHERE url_id = ? AND name = ?) 
+                   WHERE url_id = ? AND title = ?""",
+                (url_id, company_name, url_id, job_title)
+            ))
+
+        # Add job details if provided
+        if description or salary:
+            operations.append((
+                """INSERT OR IGNORE INTO job_advert_forms 
+                   (url_id, job_advert_id, description, salary) 
+                   VALUES (?, 
+                          (SELECT id FROM job_adverts WHERE url_id = ? AND title = ?), 
+                          ?, ?)""",
+                (url_id, url_id, job_title, description, salary)
+            ))
+
+        # Execute all operations in a single transaction
+        self._execute_in_transaction(operations)
+        self.logger.info(f"Inserted job '{job_title}' with related details for URL ID {url_id}")
+
+    # Refactored version of process_all_prompt_responses with transaction support
+    def process_prompt_responses_in_transaction(self, url_id: int, responses: dict) -> None:
+        """
+        Process multiple prompt responses in a single transaction.
+
+        Args:
+            url_id: The URL ID.
+            responses: Dictionary mapping response types to their data.
+        """
+        operations = []
+
+        # Build operations list based on response types
+        for response_type, data in responses.items():
+            if response_type == "recruitment_prompt" and data.get("answer") == "yes":
+                operations.append((
+                    "UPDATE urls SET recruitment_flag = 1 WHERE id = ?",
+                    (url_id,)
+                ))
+
+                # Add evidence if provided
+                evidence = data.get("evidence", [])
+                for item in evidence:
+                    operations.append((
+                        "INSERT OR IGNORE INTO recruitment_evidence (url_id, evidence) VALUES (?, ?)",
+                        (url_id, item)
+                    ))
+
+            elif response_type == "company_prompt" and data.get("company"):
+                operations.append((
+                    "INSERT OR IGNORE INTO company (url_id, name) VALUES (?, ?)",
+                    (url_id, data["company"])
+                ))
+
+            # Add other response types as needed
+
+        # Execute all operations in a single transaction
+        if operations:
+            self._execute_in_transaction(operations)
+            self.logger.info(f"Processed {len(responses)} prompt responses for URL ID {url_id}")
+
+
+    @contextmanager
+    def _transaction(self) -> Iterator[sqlite3.Connection]:
+        """
+        Context manager for database transactions.
+        Ensures that multiple operations either all succeed or all fail.
+
+        Yields:
+            sqlite3.Connection: An active database connection
+
+        Raises:
+            DatabaseError: If there's an issue with the database connection or transaction
+        """
+        conn = sqlite3.connect(self.db_path)
+        try:
+            conn.execute("PRAGMA foreign_keys = ON;")
+            yield conn
+            conn.commit()
+            self.logger.debug("Transaction committed successfully")
+        except sqlite3.Error as e:
+            conn.rollback()
+            error_msg = f"Transaction failed and was rolled back: {e}"
+            self.logger.error(error_msg)
+            raise DatabaseError(error_msg) from e
+        except Exception as e:
+            conn.rollback()
+            error_msg = f"Unexpected error during transaction, rolled back: {e}"
+            self.logger.error(error_msg)
+            raise DatabaseError(error_msg) from e
+        finally:
+            conn.close()
+
+
+    def _execute_in_transaction(self, queries_and_params: List[tuple]) -> None:
+        """
+        Execute multiple queries in a single transaction.
+
+        Args:
+            queries_and_params: List of (query, params) tuples to execute
+
+        Raises:
+            DatabaseError: If any query fails
+        """
+        if not queries_and_params:
+            return
+
+        with self._transaction() as conn:
+            cursor = conn.cursor()
+            for query, params in queries_and_params:
+                cursor.execute(query, params)
+                self.logger.debug(f"Executed query in transaction: {query}")
+
+
+    def insert_job_with_details(self, url_id: int, job_title: str,
+                                company_name: Optional[str] = None,
+                                description: Optional[str] = None,
+                                salary: Optional[str] = None) -> None:
+        """
+        Insert a job posting with its details in a single transaction.
+
+        Args:
+            url_id: Associated URL ID.
+            job_title: Job title.
+            company_name: Company name (optional).
+            description: Job description (optional).
+            salary: Salary information (optional).
+        """
+        operations = []
+
+        # Add job title insert operation
+        operations.append((
+            "INSERT OR IGNORE INTO job_adverts (url_id, title) VALUES (?, ?)",
+            (url_id, job_title)
+        ))
+
+        # Add company name if provided
+        if company_name:
+            operations.append((
+                "INSERT OR IGNORE INTO company (url_id, name) VALUES (?, ?)",
+                (url_id, company_name)
+            ))
+
+            # If we have both title and company, link them
+            operations.append((
+                """UPDATE job_adverts SET company_id = 
+                   (SELECT id FROM company WHERE url_id = ? AND name = ?) 
+                   WHERE url_id = ? AND title = ?""",
+                (url_id, company_name, url_id, job_title)
+            ))
+
+        # Add job details if provided
+        if description or salary:
+            operations.append((
+                """INSERT OR IGNORE INTO job_advert_forms 
+                   (url_id, job_advert_id, description, salary) 
+                   VALUES (?, 
+                          (SELECT id FROM job_adverts WHERE url_id = ? AND title = ?), 
+                          ?, ?)""",
+                (url_id, url_id, job_title, description, salary)
+            ))
+
+        # Execute all operations in a single transaction
+        self._execute_in_transaction(operations)
+        self.logger.info(f"Inserted job '{job_title}' with related details for URL ID {url_id}")
+
+
+    def process_prompt_responses_in_transaction(self, url_id: int, responses: dict) -> None:
+        """
+        Process multiple prompt responses in a single transaction.
+
+        Args:
+            url_id: The URL ID.
+            responses: Dictionary mapping response types to their data.
+        """
+        operations = []
+
+        # Build operations list based on response types
+        for response_type, data in responses.items():
+            if response_type == "recruitment_prompt" and data.get("answer") == "yes":
+                operations.append((
+                    "UPDATE urls SET recruitment_flag = 1 WHERE id = ?",
+                    (url_id,)
+                ))
+
+                # Add evidence if provided
+                evidence = data.get("evidence", [])
+                for item in evidence:
+                    operations.append((
+                        "INSERT OR IGNORE INTO recruitment_evidence (url_id, evidence) VALUES (?, ?)",
+                        (url_id, item)
+                    ))
+
+            elif response_type == "recruitment_prompt" and data.get("answer") == "no":
+                operations.append((
+                    "UPDATE urls SET recruitment_flag = 0 WHERE id = ?",
+                    (url_id,)
+                ))
+
+            elif response_type == "company_prompt" and data.get("company"):
+                operations.append((
+                    "INSERT OR IGNORE INTO company (url_id, name) VALUES (?, ?)",
+                    (url_id, data["company"])
+                ))
+
+            elif response_type == "agency_prompt" and data.get("agency"):
+                operations.append((
+                    "INSERT OR IGNORE INTO agency (url_id, agency) VALUES (?, ?)",
+                    (url_id, data["agency"])
+                ))
+
+            elif response_type == "job_prompt" and data.get("title"):
+                operations.append((
+                    "INSERT OR IGNORE INTO job_adverts (url_id, title) VALUES (?, ?)",
+                    (url_id, data["title"])
+                ))
+
+            elif response_type == "company_phone_number_prompt" and data.get("number"):
+                operations.append((
+                    "INSERT OR IGNORE INTO company_phone (url_id, phone) VALUES (?, ?)",
+                    (url_id, data["number"])
+                ))
+
+            elif response_type == "email_prompt" and data.get("email"):
+                operations.append((
+                    "INSERT OR IGNORE INTO emails (url_id, email) VALUES (?, ?)",
+                    (url_id, data["email"])
+                ))
+
+            elif response_type == "link_prompt" and data.get("link"):
+                operations.append((
+                    "INSERT OR IGNORE INTO links (url_id, link) VALUES (?, ?)",
+                    (url_id, data["link"])
+                ))
+
+            elif response_type == "benefits_prompt" and data.get("benefits"):
+                for benefit in data["benefits"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO benefits (url_id, benefit) VALUES (?, ?)",
+                        (url_id, benefit)
+                    ))
+
+            elif response_type == "skills_prompt" and data.get("skills"):
+                for skill in data["skills"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO skills (url_id, skill) VALUES (?, ?)",
+                        (url_id, skill)
+                    ))
+
+            elif response_type == "attributes_prompt" and data.get("attributes"):
+                for attribute in data["attributes"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO attributes (url_id, attribute) VALUES (?, ?)",
+                        (url_id, attribute)
+                    ))
+
+            elif response_type == "contacts_prompt" and data.get("contacts"):
+                for contact in data["contacts"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO contact_person (url_id, name) VALUES (?, ?)",
+                        (url_id, contact)
+                    ))
+
+            elif response_type == "location_prompt":
+                if any([data.get("country"), data.get("province"), data.get("city"), data.get("street_address")]):
+                    operations.append((
+                        """INSERT OR IGNORE INTO location 
+                           (url_id, country, province, city, street_address) 
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (url_id, data.get("country"), data.get("province"),
+                         data.get("city"), data.get("street_address"))
+                    ))
+
+            elif response_type == "jobadvert_prompt":
+                operations.append((
+                    """INSERT OR IGNORE INTO job_advert_forms 
+                       (url_id, description, salary, duration, start_date, end_date, posted_date, application_deadline) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (url_id, data.get("description"), data.get("salary"), data.get("duration"),
+                     data.get("start_date"), data.get("end_date"), data.get("posted_date"),
+                     data.get("application_deadline"))
+                ))
+
+            elif response_type == "qualifications_prompt" and data.get("qualifications"):
+                for qualification in data["qualifications"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO qualifications (url_id, qualification) VALUES (?, ?)",
+                        (url_id, qualification)
+                    ))
+
+            elif response_type == "duties_prompt" and data.get("duties"):
+                for duty in data["duties"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO duties (url_id, duty) VALUES (?, ?)",
+                        (url_id, duty)
+                    ))
+
+        # Execute all operations in a single transaction
+        if operations:
+            self._execute_in_transaction(operations)
+            self.logger.info(f"Processed {len(responses)} prompt responses for URL ID {url_id}")

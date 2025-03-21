@@ -31,7 +31,7 @@ from recruitment_db_lib import DatabaseError, RecruitmentDatabase
 from recruitment_models import (AgencyResponse, AttributesResponse, BenefitsResponse,
                                 CompanyResponse, ConfirmResponse, ContactPersonResponse,
                                 EmailResponse, JobAdvertResponse, JobResponse,
-                                LocationResponse, PhoneNumberResponse, LinkResponse, SkillsResponse)
+                                LocationResponse, CompanyPhoneNumberResponse, LinkResponse, SkillsResponse)
 from response_processor_functions import PromptResponseProcessor
 from web_crawler_lib import crawl_website_sync, WebCrawlerResult
 
@@ -189,7 +189,7 @@ def get_model_class_for_prompt(prompt_key: str) -> Optional[Any]:
         "attributes_prompt": AttributesResponse,
         "contact_prompt": ContactPersonResponse,
         "benefits_prompt": BenefitsResponse,
-        "phone_prompt": PhoneNumberResponse,
+        "phone_prompt": CompanyPhoneNumberResponse,
         "email_prompt": EmailResponse,
         "link_prompt": LinkResponse,
         "location_prompt": LocationResponse,
