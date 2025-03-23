@@ -87,7 +87,7 @@ async def sync_crawler_test_async(url):
         print(f"Markdown length: {len(crawl_result.markdown)} characters")
         print("\nFirst 300 characters of markdown:")
         print("-" * 50)
-        print(crawl_result.markdown[:300])
+        print(crawl_result.markdown[:10000])
         print("-" * 50)
     else:
         print(f"❌ Sync crawler failed: {crawl_result.error_message}")
@@ -137,7 +137,7 @@ def main():
 
     parser = argparse.ArgumentParser(description='Web Crawler Debug Tool')
     parser.add_argument('--url', type=str,
-                        default='https://www.myjobmag.co.za/job/porter-irene-day-hospital-intercare-group-south-africa',
+                        default='https://matriq.co.za/job/boilermaker/',
                         help='URL to crawl')
     args = parser.parse_args()
 

@@ -5,15 +5,9 @@ import pandas as pd
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from dataclasses import dataclass
 from functools import partial
-import hashlib
+from logging_config import setup_logging
 
-logging.basicConfig(
-    filename="get_urls.log",
-    filemode="a",
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logger = logging.getLogger(__name__)
+logger = setup_logging("get_urls_from_csvs")
 
 @dataclass
 class URLProcessingResult:

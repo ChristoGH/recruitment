@@ -9,7 +9,7 @@ from datetime import datetime, timedelta
 from pathlib import Path
 from dataclasses import dataclass, field
 from typing import List, Dict, Any, Optional, Iterator, Union
-
+from logging_config import setup_logging
 from dotenv import load_dotenv
 
 # Load environment variables
@@ -71,21 +71,61 @@ class RecruitmentDatabase:
         self._setup_logging()
         self._initialize_schema()
 
+    def test_skill_insertion(self, url_id: int):
+        """Test direct skill insertion with experience data using multiple scenarios."""
+        test_cases = [
+            {"skill": "Test Skill 1", "experience": "5 years"},
+            {"skill": "Test Skill 2", "experience": None},
+            {"skill": "Test Skill 3", "experience": "Entry level"},
+            {"skill": "Test Skill 3", "experience": "Advanced level"},  # Same skill, different experience
+        ]
+
+        success_count = 0
+        for test_case in test_cases:
+            try:
+                query = "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)"
+                with self._execute_query(query, (url_id, test_case["skill"], test_case["experience"])) as cursor:
+                    if cursor.rowcount > 0:
+                        self.logger.info(
+                            f"Successfully inserted skill '{test_case['skill']}' with experience '{test_case['experience']}'")
+                        success_count += 1
+                    else:
+                        self.logger.warning(
+                            f"Skill '{test_case['skill']}' with experience '{test_case['experience']}' not inserted (possibly duplicate)")
+
+                # Verify insertion
+                verify_query = "SELECT skill, experience FROM skills WHERE url_id = ? AND skill = ? AND (experience = ? OR (experience IS NULL AND ? IS NULL))"
+                with self._execute_query(verify_query, (
+                url_id, test_case["skill"], test_case["experience"], test_case["experience"])) as cursor:
+                    result = cursor.fetchone()
+                    if result:
+                        self.logger.info(f"Retrieved skill: {result[0]}, experience: {result[1]}")
+                    else:
+                        self.logger.warning(
+                            f"Could not retrieve skill '{test_case['skill']}' with experience '{test_case['experience']}'")
+            except Exception as e:
+                self.logger.error(f"Test skill insertion failed for '{test_case['skill']}': {e}")
+
+        self.logger.info(f"Test skill insertion: {success_count} out of {len(test_cases)} successful insertions")
+
+    def check_skills_table_schema(self):
+        """Verify that the skills table has the necessary columns."""
+        query = "PRAGMA table_info(skills)"
+        with self._execute_query(query) as cursor:
+            columns = cursor.fetchall()
+            column_names = [col[1] for col in columns]
+            self.logger.info(f"Skills table columns: {column_names}")
+            if 'experience' not in column_names:
+                self.logger.warning("Skills table is missing the 'experience' column!")
+
+    # Create module-specific logger
+
     def _setup_logging(self) -> None:
         """Configure a rotating file logger for database operations."""
         self.log_dir = Path("logs")
         self.log_dir.mkdir(exist_ok=True)
-        log_file = self.log_dir / "recruitment_db.log"
+        self.logger = setup_logging("recruitment_db_lib", log_level=logging.INFO)
 
-        self.logger = logging.getLogger(__name__)
-        self.logger.setLevel(logging.INFO)
-        if not self.logger.handlers:
-            handler = logging.handlers.RotatingFileHandler(
-                log_file, maxBytes=10 * 1024 * 1024, backupCount=5
-            )
-            formatter = logging.Formatter("%(asctime)s - %(name)s - %(levelname)s - %(message)s")
-            handler.setFormatter(formatter)
-            self.logger.addHandler(handler)
 
     @contextmanager
     def _get_connection(self) -> Iterator[sqlite3.Connection]:
@@ -362,18 +402,22 @@ class RecruitmentDatabase:
             self.logger.info("Table 'benefits' created or verified.")
 
     def _create_skills_table(self) -> None:
-        """Create the 'skills' table."""
+        """
+        Create the 'skills' table with columns for both skill name and experience.
+        This updated table structure supports storing multiple experience levels for the same skill.
+        """
         query = """
             CREATE TABLE IF NOT EXISTS skills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url_id INTEGER NOT NULL,
                 skill TEXT NOT NULL,
-                UNIQUE (url_id, skill),
+                experience TEXT,
+                UNIQUE (url_id, skill, experience),
                 FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """
         with self._execute_query(query):
-            self.logger.info("Table 'skills' created or verified.")
+            self.logger.info("Table 'skills' created or verified with experience column and proper constraints.")
 
     def _create_location_table(self) -> None:
         """Create the 'location' table."""
@@ -663,7 +707,7 @@ class RecruitmentDatabase:
         query_parts.append("ORDER BY extracted_date DESC LIMIT ?")
         params.append(limit)
         query = " ".join(query_parts)
-        self.logger.debug(f"Executing search query: {query} with params: {params}")
+        self.logger.info(f"Executing search query: {query} with params: {params}")
 
         with self._execute_query(query, tuple(params)) as cursor:
             rows = cursor.fetchall()
@@ -835,19 +879,18 @@ class RecruitmentDatabase:
         with self._execute_query(query, (url_id, title)):
             self.logger.info(f"Inserted job title '{title}' for URL ID {url_id}")
 
-
-    def insert_skill(self, url_id: int, skill: str) -> None:
+    def insert_skill(self, url_id: int, skill: str, experience: str = None) -> None:
         """
-        Insert a skill record.
+        Insert a skill record with optional experience information.
 
         Args:
             url_id: Associated URL ID.
             skill: Required skill.
+            experience: Experience requirement for the skill (optional).
         """
-        query = "INSERT OR IGNORE INTO skills (url_id, skill) VALUES (?, ?)"
-        with self._execute_query(query, (url_id, skill)):
-            self.logger.info(f"Inserted skill '{skill}' for URL ID {url_id}")
-
+        query = "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)"
+        with self._execute_query(query, (url_id, skill, experience)):
+            self.logger.info(f"Inserted skill '{skill}' with experience '{experience}' for URL ID {url_id}")
 
     def insert_company_phone_number(self, url_id: int, number: str) -> None:
         """
@@ -1013,20 +1056,142 @@ class RecruitmentDatabase:
 
     # Methods to handle bulk inserts for list-returning prompts
 
-    def insert_skills_list(self, url_id: int, skills: list) -> None:
+    def insert_skills_list(self, url_id: int, skills_data: list) -> None:
         """
-        Insert multiple skills for a URL.
+        Insert multiple skills with their associated experience requirements for a URL.
+        Handles skills in tuple, list, dict, or string format.
 
         Args:
             url_id: Associated URL ID.
-            skills: List of skills.
+            skills_data: List of skill items in various formats:
+                - Tuples: [(skill1, exp1), (skill2, exp2), (skill3, None)]
+                - Lists from converted tuples: [["skill1", "exp1"], ["skill2", "exp2"]]
+                - SkillExperience objects from Pydantic model
+                - Strings (for skills without experience data)
+                - Dictionaries with skill and experience keys
         """
-        if not skills:
+        if not skills_data:
+            self.logger.warning(f"No skills data provided for URL ID {url_id}")
             return
 
-        for skill in skills:
-            self.insert_skill(url_id, skill)
+        self.logger.info(f"Inserting {len(skills_data)} skills for URL ID {url_id}")
 
+        # For debugging purposes
+        if self.logger.isEnabledFor(logging.DEBUG):
+            self.logger.debug(f"Raw skills data: {skills_data}")
+
+        operations = []
+        successful_skills = []
+        failed_skills = []
+
+        for i, skill_item in enumerate(skills_data):
+            try:
+                skill = None
+                experience = None
+
+                # Handle different input formats
+                if isinstance(skill_item, tuple):
+                    # Handle tuple format (skill, experience)
+                    if len(skill_item) >= 2:
+                        skill, experience = skill_item
+                    else:
+                        skill, experience = skill_item[0], None
+
+                    self.logger.debug(f"Processed tuple format: ({skill}, {experience})")
+
+                elif isinstance(skill_item, list):
+                    # Handle list format (converted from tuple)
+                    if len(skill_item) >= 2:
+                        skill, experience = skill_item[0], skill_item[1]
+                    else:
+                        skill, experience = skill_item[0], None
+
+                    self.logger.debug(f"Processed list format: {skill_item} -> ({skill}, {experience})")
+
+                elif isinstance(skill_item, dict) and 'skill' in skill_item:
+                    # Handle dictionary format
+                    skill = skill_item['skill']
+                    experience = skill_item.get('experience')
+
+                    self.logger.debug(f"Processed dict format: {skill_item} -> ({skill}, {experience})")
+
+                elif hasattr(skill_item, 'skill') and hasattr(skill_item, 'experience'):
+                    # Handle SkillExperience objects from Pydantic model
+                    skill = skill_item.skill
+                    experience = skill_item.experience
+
+                    self.logger.debug(f"Processed object format with attributes -> ({skill}, {experience})")
+
+                elif hasattr(skill_item, 'model_dump'):
+                    # Handle full Pydantic model object
+                    data = skill_item.model_dump()
+                    skill = data.get('skill')
+                    experience = data.get('experience')
+
+                    self.logger.debug(f"Processed model_dump format: {data} -> ({skill}, {experience})")
+
+                elif isinstance(skill_item, str):
+                    # Handle string format (for skills without experience data)
+                    skill = skill_item
+                    experience = None
+
+                    self.logger.debug(f"Processed string format: {skill_item} -> ({skill}, None)")
+
+                else:
+                    # Try to convert to string as last resort
+                    self.logger.warning(
+                        f"Unrecognized skill format at index {i}: {type(skill_item).__name__} - {skill_item}")
+                    try:
+                        skill = str(skill_item)
+                        experience = None
+                        self.logger.debug(f"Converted unknown format to string: {skill}")
+                    except:
+                        failed_skills.append((str(skill_item), "Unrecognized format"))
+                        continue
+
+                # Ensure skill is not empty
+                if not skill or not isinstance(skill, str) or not skill.strip():
+                    self.logger.warning(f"Skipping empty skill at index {i}")
+                    failed_skills.append(("", "Empty skill"))
+                    continue
+
+                # Normalize "not_listed" to None
+                if experience == "not_listed" or (isinstance(experience, str) and not experience.strip()):
+                    experience = None
+
+                # Clean the skill name
+                skill = skill.strip()
+
+                # Add operation to insert the skill
+                operations.append((
+                    "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)",
+                    (url_id, skill, experience)
+                ))
+
+                successful_skills.append((skill, experience))
+
+            except Exception as e:
+                self.logger.error(f"Error processing skill at index {i}: {e}")
+                failed_skills.append((str(skill_item), str(e)))
+
+        # Execute all operations in a single transaction for efficiency
+        if operations:
+            try:
+                self._execute_in_transaction(operations)
+                self.logger.info(f"Successfully inserted {len(operations)} skills for URL ID {url_id}")
+
+                # Verify if skills were actually inserted
+                query = f"SELECT COUNT(*) FROM skills WHERE url_id = ?"
+                with self._execute_query(query, (url_id,)) as cursor:
+                    count = cursor.fetchone()[0]
+                    self.logger.info(f"Verification: {count} skills now exist for URL ID {url_id}")
+
+            except Exception as e:
+                self.logger.error(f"Error in transaction when inserting skills for URL ID {url_id}: {e}")
+                self.logger.error(f"Failed skills: {failed_skills}")
+                raise
+        else:
+            self.logger.warning(f"No valid skills to insert for URL ID {url_id}")
 
     def insert_attributes_list(self, url_id: int, attributes: list) -> None:
         """
@@ -1182,7 +1347,7 @@ class RecruitmentDatabase:
             conn.execute("PRAGMA foreign_keys = ON;")
             yield conn
             conn.commit()
-            self.logger.debug("Transaction committed successfully")
+            self.logger.info("Transaction committed successfully")
         except sqlite3.Error as e:
             conn.rollback()
             error_msg = f"Transaction failed and was rolled back: {e}"
@@ -1197,24 +1362,23 @@ class RecruitmentDatabase:
             conn.close()
 
     def _execute_in_transaction(self, queries_and_params: List[tuple]) -> None:
-        """
-        Execute multiple queries in a single transaction.
-
-        Args:
-            queries_and_params: List of (query, params) tuples to execute
-
-        Raises:
-            DatabaseError: If any query fails
-        """
         if not queries_and_params:
             return
 
         with self._transaction() as conn:
             cursor = conn.cursor()
-            for query, params in queries_and_params:
-                cursor.execute(query, params)
-                self.logger.debug(f"Executed query in transaction: {query}")
-
+            for i, (query, params) in enumerate(queries_and_params):
+                self.logger.info(f"Execute data: {(i, query, params)}")
+                try:
+                    self.logger.info(f"Executing query ({i + 1}/{len(queries_and_params)}): {query}")
+                    self.logger.info(f"With params: {params}")
+                    cursor.execute(query, params)
+                    self.logger.info(f"Query execution successful")
+                except Exception as e:
+                    self.logger.error(f"Failed to execute query ({i + 1}/{len(queries_and_params)}): {query}")
+                    self.logger.error(f"With params: {params}")
+                    self.logger.error(f"Error: {e}")
+                    raise
     # Example refactored method using transactions
     def insert_location(self, url_id: int, country: str = None, province: str = None,
                         city: str = None, street_address: str = None) -> None:
@@ -1298,10 +1462,7 @@ class RecruitmentDatabase:
     def process_prompt_responses_in_transaction(self, url_id: int, responses: dict) -> None:
         """
         Process multiple prompt responses in a single transaction.
-
-        Args:
-            url_id: The URL ID.
-            responses: Dictionary mapping response types to their data.
+        Focus on correctly handling skills formatted as tuples.
         """
         operations = []
 
@@ -1321,19 +1482,199 @@ class RecruitmentDatabase:
                         (url_id, item)
                     ))
 
+            elif response_type == "recruitment_prompt" and data.get("answer") == "no":
+                operations.append((
+                    "UPDATE urls SET recruitment_flag = 0 WHERE id = ?",
+                    (url_id,)
+                ))
+
             elif response_type == "company_prompt" and data.get("company"):
                 operations.append((
                     "INSERT OR IGNORE INTO company (url_id, name) VALUES (?, ?)",
                     (url_id, data["company"])
                 ))
 
-            # Add other response types as needed
+            elif response_type == "agency_prompt" and data.get("agency"):
+                operations.append((
+                    "INSERT OR IGNORE INTO agency (url_id, agency) VALUES (?, ?)",
+                    (url_id, data["agency"])
+                ))
+
+            elif response_type == "job_prompt" and data.get("title"):
+                operations.append((
+                    "INSERT OR IGNORE INTO job_adverts (url_id, title) VALUES (?, ?)",
+                    (url_id, data["title"])
+                ))
+
+            elif response_type == "company_phone_number_prompt" and data.get("number"):
+                operations.append((
+                    "INSERT OR IGNORE INTO company_phone (url_id, phone) VALUES (?, ?)",
+                    (url_id, data["number"])
+                ))
+
+            elif response_type == "email_prompt" and data.get("email"):
+                operations.append((
+                    "INSERT OR IGNORE INTO email (url_id, email) VALUES (?, ?)",
+                    (url_id, data["email"])
+                ))
+
+            elif response_type == "link_prompt" and data.get("link"):
+                operations.append((
+                    "INSERT OR IGNORE INTO links (url_id, link) VALUES (?, ?)",
+                    (url_id, data["link"])
+                ))
+
+            elif response_type == "benefits_prompt" and data.get("benefits"):
+                for benefit in data["benefits"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO benefits (url_id, benefit) VALUES (?, ?)",
+                        (url_id, benefit)
+                    ))
+
+            # CRITICAL FIX FOR SKILLS
+            # CRITICAL FIX FOR SKILLS - ADD THIS CODE
+            elif response_type == "skills_prompt" and data.get("skills"):
+                skills_data = data["skills"]
+                self.logger.info(f"Processing skills data: {skills_data}, type: {type(skills_data)}")
+
+                # Handle null skills
+                if skills_data is None:
+                    self.logger.warning(f"Skills data is None for URL ID {url_id}")
+                    continue
+
+                # Handle skills list
+                if isinstance(skills_data, list):
+                    for skill_item in skills_data:
+                        try:
+                            # Handle tuple format
+                            if isinstance(skill_item, tuple):
+                                if len(skill_item) >= 2:
+                                    skill, experience = skill_item
+                                    # Convert "not_listed" to None
+                                    if experience == "not_listed":
+                                        experience = None
+
+                                    self.logger.info(f"Adding skill from tuple: ({skill}, {experience})")
+                                    operations.append((
+                                        "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)",
+                                        (url_id, skill, experience)
+                                    ))
+
+                            # Handle SkillExperience objects
+                            elif hasattr(skill_item, 'skill'):
+                                skill = skill_item.skill
+                                experience = getattr(skill_item, 'experience', None)
+                                # Convert "not_listed" to None
+                                if experience == "not_listed":
+                                    experience = None
+
+                                self.logger.info(f"Adding skill from object: ({skill}, {experience})")
+                                operations.append((
+                                    "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)",
+                                    (url_id, skill, experience)
+                                ))
+
+                            # Handle dictionary format
+                            elif isinstance(skill_item, dict) and 'skill' in skill_item:
+                                skill = skill_item['skill']
+                                experience = skill_item.get('experience')
+                                # Convert "not_listed" to None
+                                if experience == "not_listed":
+                                    experience = None
+
+                                self.logger.info(f"Adding skill from dict: ({skill}, {experience})")
+                                operations.append((
+                                    "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)",
+                                    (url_id, skill, experience)
+                                ))
+
+                            # Handle string items
+                            elif isinstance(skill_item, str):
+                                self.logger.info(f"Adding skill from string: ({skill_item}, None)")
+                                operations.append((
+                                    "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)",
+                                    (url_id, skill_item, None)
+                                ))
+                        except Exception as e:
+                            self.logger.error(f"Error processing skill item {skill_item}: {e}")
+
+                    skill_ops_count = sum(1 for op in operations if "INSERT OR IGNORE INTO skills" in op[0])
+                    self.logger.info(f"Added {skill_ops_count} skill operations for URL ID {url_id}")
+
+            elif response_type == "attributes_prompt" and data.get("attributes"):
+                for attribute in data["attributes"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO attributes (url_id, attribute) VALUES (?, ?)",
+                        (url_id, attribute)
+                    ))
+
+            elif response_type == "contacts_prompt" and data.get("contacts"):
+                for contact in data["contacts"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO contact_person (url_id, name) VALUES (?, ?)",
+                        (url_id, contact)
+                    ))
+
+            elif response_type == "location_prompt":
+                if any([data.get("country"), data.get("province"), data.get("city"), data.get("street_address")]):
+                    operations.append((
+                        """INSERT OR IGNORE INTO location 
+                           (url_id, country, province, city, street_address) 
+                           VALUES (?, ?, ?, ?, ?)""",
+                        (url_id, data.get("country"), data.get("province"),
+                         data.get("city"), data.get("street_address"))
+                    ))
+
+            elif response_type == "jobadvert_prompt":
+                operations.append((
+                    """INSERT OR IGNORE INTO job_advert_forms 
+                       (url_id, description, salary, duration, start_date, end_date, posted_date, application_deadline) 
+                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
+                    (url_id, data.get("description"), data.get("salary"), data.get("duration"),
+                     data.get("start_date"), data.get("end_date"), data.get("posted_date"),
+                     data.get("application_deadline"))
+                ))
+
+            elif response_type == "qualifications_prompt" and data.get("qualifications"):
+                for qualification in data["qualifications"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO qualifications (url_id, qualification) VALUES (?, ?)",
+                        (url_id, qualification)
+                    ))
+
+            elif response_type == "duties_prompt" and data.get("duties"):
+                for duty in data["duties"]:
+                    operations.append((
+                        "INSERT OR IGNORE INTO duties (url_id, duty) VALUES (?, ?)",
+                        (url_id, duty)
+                    ))
 
         # Execute all operations in a single transaction
         if operations:
+            # Log skill operations specifically for debugging
+            skill_ops = [op for op in operations if op[0].startswith('INSERT OR IGNORE INTO skills')]
+            if skill_ops:
+                self.logger.info(f"Will execute {len(skill_ops)} skill insert operations in transaction")
+                for i, (query, params) in enumerate(skill_ops):
+                    self.logger.info(f"Skill operation {i + 1}: {params}")
+
             self._execute_in_transaction(operations)
             self.logger.info(f"Processed {len(responses)} prompt responses for URL ID {url_id}")
 
+            # Verify skills were inserted
+            query = "SELECT COUNT(*) FROM skills WHERE url_id = ?"
+            with self._execute_query(query, (url_id,)) as cursor:
+                count = cursor.fetchone()[0]
+                self.logger.info(f"After transaction: {count} skills exist for URL ID {url_id}")
+
+                if count > 0:
+                    query = "SELECT skill, experience FROM skills WHERE url_id = ?"
+                    with self._execute_query(query, (url_id,)) as cursor:
+                        results = cursor.fetchall()
+                        for skill, exp in results:
+                            self.logger.info(f"Inserted skill: '{skill}' with experience: '{exp}'")
+        else:
+            self.logger.warning(f"No database operations generated for responses: {list(responses.keys())}")
 
     @contextmanager
     def _transaction(self) -> Iterator[sqlite3.Connection]:
@@ -1352,7 +1693,7 @@ class RecruitmentDatabase:
             conn.execute("PRAGMA foreign_keys = ON;")
             yield conn
             conn.commit()
-            self.logger.debug("Transaction committed successfully")
+            self.logger.info("Transaction committed successfully")
         except sqlite3.Error as e:
             conn.rollback()
             error_msg = f"Transaction failed and was rolled back: {e}"
@@ -1366,7 +1707,7 @@ class RecruitmentDatabase:
         finally:
             conn.close()
 
-
+    # 3. Enhanced logging for _execute_in_transaction() in recruitment_db_lib.py
     def _execute_in_transaction(self, queries_and_params: List[tuple]) -> None:
         """
         Execute multiple queries in a single transaction.
@@ -1383,9 +1724,16 @@ class RecruitmentDatabase:
         with self._transaction() as conn:
             cursor = conn.cursor()
             for query, params in queries_and_params:
-                cursor.execute(query, params)
-                self.logger.debug(f"Executed query in transaction: {query}")
-
+                try:
+                    self.logger.info(f"Executing query: {query}")
+                    self.logger.info(f"With params: {params}")
+                    cursor.execute(query, params)
+                    self.logger.info(f"Query execution successful")
+                except Exception as e:
+                    self.logger.error(f"Query execution failed: {query}")
+                    self.logger.error(f"Params: {params}")
+                    self.logger.error(f"Error: {e}")
+                    raise
 
     def insert_job_with_details(self, url_id: int, job_title: str,
                                 company_name: Optional[str] = None,
@@ -1440,137 +1788,18 @@ class RecruitmentDatabase:
         self.logger.info(f"Inserted job '{job_title}' with related details for URL ID {url_id}")
 
 
-    def process_prompt_responses_in_transaction(self, url_id: int, responses: dict) -> None:
-        """
-        Process multiple prompt responses in a single transaction.
-
-        Args:
-            url_id: The URL ID.
-            responses: Dictionary mapping response types to their data.
-        """
-        operations = []
-
-        # Build operations list based on response types
-        for response_type, data in responses.items():
-            if response_type == "recruitment_prompt" and data.get("answer") == "yes":
-                operations.append((
-                    "UPDATE urls SET recruitment_flag = 1 WHERE id = ?",
-                    (url_id,)
-                ))
-
-                # Add evidence if provided
-                evidence = data.get("evidence", [])
-                for item in evidence:
-                    operations.append((
-                        "INSERT OR IGNORE INTO recruitment_evidence (url_id, evidence) VALUES (?, ?)",
-                        (url_id, item)
-                    ))
-
-            elif response_type == "recruitment_prompt" and data.get("answer") == "no":
-                operations.append((
-                    "UPDATE urls SET recruitment_flag = 0 WHERE id = ?",
-                    (url_id,)
-                ))
-
-            elif response_type == "company_prompt" and data.get("company"):
-                operations.append((
-                    "INSERT OR IGNORE INTO company (url_id, name) VALUES (?, ?)",
-                    (url_id, data["company"])
-                ))
-
-            elif response_type == "agency_prompt" and data.get("agency"):
-                operations.append((
-                    "INSERT OR IGNORE INTO agency (url_id, agency) VALUES (?, ?)",
-                    (url_id, data["agency"])
-                ))
-
-            elif response_type == "job_prompt" and data.get("title"):
-                operations.append((
-                    "INSERT OR IGNORE INTO job_adverts (url_id, title) VALUES (?, ?)",
-                    (url_id, data["title"])
-                ))
-
-            elif response_type == "company_phone_number_prompt" and data.get("number"):
-                operations.append((
-                    "INSERT OR IGNORE INTO company_phone (url_id, phone) VALUES (?, ?)",
-                    (url_id, data["number"])
-                ))
-
-            elif response_type == "email_prompt" and data.get("email"):
-                operations.append((
-                    "INSERT OR IGNORE INTO emails (url_id, email) VALUES (?, ?)",
-                    (url_id, data["email"])
-                ))
-
-            elif response_type == "link_prompt" and data.get("link"):
-                operations.append((
-                    "INSERT OR IGNORE INTO links (url_id, link) VALUES (?, ?)",
-                    (url_id, data["link"])
-                ))
-
-            elif response_type == "benefits_prompt" and data.get("benefits"):
-                for benefit in data["benefits"]:
-                    operations.append((
-                        "INSERT OR IGNORE INTO benefits (url_id, benefit) VALUES (?, ?)",
-                        (url_id, benefit)
-                    ))
-
-            elif response_type == "skills_prompt" and data.get("skills"):
-                for skill in data["skills"]:
-                    operations.append((
-                        "INSERT OR IGNORE INTO skills (url_id, skill) VALUES (?, ?)",
-                        (url_id, skill)
-                    ))
-
-            elif response_type == "attributes_prompt" and data.get("attributes"):
-                for attribute in data["attributes"]:
-                    operations.append((
-                        "INSERT OR IGNORE INTO attributes (url_id, attribute) VALUES (?, ?)",
-                        (url_id, attribute)
-                    ))
-
-            elif response_type == "contacts_prompt" and data.get("contacts"):
-                for contact in data["contacts"]:
-                    operations.append((
-                        "INSERT OR IGNORE INTO contact_person (url_id, name) VALUES (?, ?)",
-                        (url_id, contact)
-                    ))
-
-            elif response_type == "location_prompt":
-                if any([data.get("country"), data.get("province"), data.get("city"), data.get("street_address")]):
-                    operations.append((
-                        """INSERT OR IGNORE INTO location 
-                           (url_id, country, province, city, street_address) 
-                           VALUES (?, ?, ?, ?, ?)""",
-                        (url_id, data.get("country"), data.get("province"),
-                         data.get("city"), data.get("street_address"))
-                    ))
-
-            elif response_type == "jobadvert_prompt":
-                operations.append((
-                    """INSERT OR IGNORE INTO job_advert_forms 
-                       (url_id, description, salary, duration, start_date, end_date, posted_date, application_deadline) 
-                       VALUES (?, ?, ?, ?, ?, ?, ?, ?)""",
-                    (url_id, data.get("description"), data.get("salary"), data.get("duration"),
-                     data.get("start_date"), data.get("end_date"), data.get("posted_date"),
-                     data.get("application_deadline"))
-                ))
-
-            elif response_type == "qualifications_prompt" and data.get("qualifications"):
-                for qualification in data["qualifications"]:
-                    operations.append((
-                        "INSERT OR IGNORE INTO qualifications (url_id, qualification) VALUES (?, ?)",
-                        (url_id, qualification)
-                    ))
-
-            elif response_type == "duties_prompt" and data.get("duties"):
-                for duty in data["duties"]:
-                    operations.append((
-                        "INSERT OR IGNORE INTO duties (url_id, duty) VALUES (?, ?)",
-                        (url_id, duty)
-                    ))
-
-        # Execute all operations in a single transaction
-        if operations:
-            self._execute_in_transaction(operations)
-            self.logger.info(f"Processed {len(responses)} prompt responses for URL ID {url_id}")
+    def check_skills_table_constraints(self):
+        """Check the unique constraints on the skills table."""
+        query = "SELECT sql FROM sqlite_master WHERE type='table' AND name='skills'"
+        with self._execute_query(query) as cursor:
+            result = cursor.fetchone()
+            if result:
+                self.logger.info(f"Skills table definition: {result[0]}")
+                # Check for UNIQUE constraint
+                constraint_info = result[0]
+                if "UNIQUE" in constraint_info:
+                    unique_constraint = constraint_info[constraint_info.find("UNIQUE"):]
+                    unique_constraint = unique_constraint[:unique_constraint.find(")") + 1]
+                    self.logger.info(f"Unique constraint: {unique_constraint}")
+                else:
+                    self.logger.info("No UNIQUE constraint found on skills table")

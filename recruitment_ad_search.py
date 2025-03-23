@@ -18,7 +18,9 @@ import tldextract
 from googlesearch import search  # Ensure you are using the correct googlesearch package.
 import json
 import os
+from logging_config import setup_logging
 
+logger = setup_logging("recruitment_ad_search")
 from libraries.neo4j_lib import execute_neo4j_query
 
 
@@ -42,14 +44,6 @@ def load_config(config_path: str) -> dict:
 
 config = load_config("search_config.json")
 
-logging.basicConfig(
-    filename="recruitment_ad_search.log",
-    filemode="a",
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logger = logging.getLogger(__name__)
-logger.info("Recruitment Ad Search service started (refactored, sync version).")
 
 
 # ------------------------------

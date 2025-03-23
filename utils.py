@@ -5,8 +5,8 @@ from pydantic import BaseModel
 
 # Import all the necessary model classes
 from recruitment_models import (
-    AdvertResponse, ConfirmResponse, JobResponse, LocationResponse,
-    ContactPersonResponse, SkillsResponse, AttributesResponse,
+    AdvertResponse, JobResponse, LocationResponse,
+    ContactPersonResponse, SkillExperienceResponse, AttributesResponse,
     AgencyResponse, CompanyResponse, BenefitsResponse, DutiesResponse,
     QualificationsResponse, LinkResponse, EmailResponse, CompanyPhoneNumberResponse,
     JobAdvertResponse
@@ -23,7 +23,7 @@ PROMPT_MODEL_MAP: Dict[str, Type[BaseModel]] = {
     "email_prompt": EmailResponse,
     "link_prompt": LinkResponse,
     "benefits_prompt": BenefitsResponse,
-    "skills_prompt": SkillsResponse,
+    "skills_prompt": SkillExperienceResponse,
     "attributes_prompt": AttributesResponse,
     "location_prompt": LocationResponse,
     "jobadvert_prompt": JobAdvertResponse,

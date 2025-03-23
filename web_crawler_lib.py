@@ -13,6 +13,10 @@ from typing import Dict, Any, Optional, List, Union
 from crawl4ai.async_configs import BrowserConfig, CrawlerRunConfig, CacheMode
 from crawl4ai.markdown_generation_strategy import DefaultMarkdownGenerator
 from crawl4ai import AsyncWebCrawler
+from logging_config import setup_logging
+
+# Create module-specific logger
+logger = setup_logging("web_crawler_lib")
 
 
 class WebCrawlerResult:
@@ -93,26 +97,26 @@ async def crawl_website(
 
     try:
         if verbose:
-            print(f"Starting crawler for URL: {url}")
+            logger.debug(f"Starting crawler for URL: {url}")
 
         async with AsyncWebCrawler(config=browser_config) as crawler:
             if verbose:
-                print("AsyncWebCrawler context created")
+                logger.debug("AsyncWebCrawler context created")
 
             result = await crawler.arun(url=url, config=run_config)
 
             if verbose:
-                print(f"Crawler run completed. Result type: {type(result)}")
+                logger.debug(f"Crawler run completed. Result type: {type(result)}")
 
             # Check if result has the expected attributes
             if not hasattr(result, 'success'):
                 if verbose:
-                    print(f"Result doesn't have 'success' attribute. Available attributes: {dir(result)}")
+                    logger.debug(f"Result doesn't have 'success' attribute. Available attributes: {dir(result)}")
 
                 # If it has markdown but no success flag, consider it successful
                 if hasattr(result, 'markdown') and result.markdown:
                     if verbose:
-                        print(f"Found markdown content of length: {len(result.markdown)}")
+                        logger.debug(f"Found markdown content of length: {len(result.markdown)}")
                     return WebCrawlerResult(
                         success=True,
                         markdown=result.markdown,
@@ -122,7 +126,7 @@ async def crawl_website(
                     )
                 else:
                     if verbose:
-                        print("No markdown content found")
+                        logger.debug("No markdown content found")
                     return WebCrawlerResult(
                         success=False,
                         error_message="No content found"
@@ -131,7 +135,7 @@ async def crawl_website(
             # Handle successful case - note we're not accessing the text attribute
             if result.success:
                 if verbose:
-                    print(f"Crawler successful with markdown length: {len(result.markdown)}")
+                    logger.debug(f"Crawler successful with markdown length: {len(result.markdown)}")
                 return WebCrawlerResult(
                     success=True,
                     markdown=result.markdown,
@@ -142,7 +146,7 @@ async def crawl_website(
                 )
             else:
                 if verbose:
-                    print(f"Crawler failed with error: {getattr(result, 'error_message', 'Unknown error')}")
+                    logger.warning(f"Crawler failed with error: {getattr(result, 'error_message', 'Unknown error')}")
                 return WebCrawlerResult(
                     success=False,
                     error_message=getattr(result, 'error_message', 'Unknown error')
@@ -150,8 +154,8 @@ async def crawl_website(
     except Exception as e:
         error_details = traceback.format_exc()
         if verbose:
-            print(f"Crawler exception: {str(e)}")
-            print(f"Traceback: {error_details}")
+            logger.error(f"Crawler exception: {str(e)}")
+            logger.error(f"Traceback: {error_details}")
 
         return WebCrawlerResult(
             success=False,
@@ -201,7 +205,7 @@ def crawl_website_sync(
     """
     try:
         if verbose:
-            print("Starting synchronous crawler...")
+            logger.debug("Starting synchronous crawler...")
 
         # Check if we're in an event loop already
         try:
@@ -212,12 +216,12 @@ def crawl_website_sync(
             in_event_loop = False
 
         if verbose:
-            print(f"Current thread has running event loop: {in_event_loop}")
+            logger.debug(f"Current thread has running event loop: {in_event_loop}")
 
         if in_event_loop:
             # If we're in an event loop, run the crawler in a separate thread
             if verbose:
-                print("Running in a thread with a new event loop")
+                logger.debug("Running in a thread with a new event loop")
 
             # Define a function to run in a separate thread
             def run_in_thread():
@@ -238,7 +242,7 @@ def crawl_website_sync(
         else:
             # If we're not in an event loop, we can use asyncio.run
             if verbose:
-                print("Using asyncio.run in the current thread")
+                logger.debug("Using asyncio.run in the current thread")
 
             return asyncio.run(
                 crawl_website(
@@ -255,8 +259,8 @@ def crawl_website_sync(
     except Exception as e:
         error_details = traceback.format_exc()
         if verbose:
-            print(f"Sync crawler exception: {str(e)}")
-            print(f"Traceback: {error_details}")
+            logger.error(f"Sync crawler exception: {str(e)}")
+            logger.error(f"Traceback: {error_details}")
 
         return WebCrawlerResult(
             success=False,

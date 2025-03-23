@@ -1,11 +1,14 @@
 # batch_processor.py
 
 import logging
-from typing import Dict, Any, List, Optional
+from typing import Dict, Any, List, Optional, Tuple, Union
 import json
 from recruitment_db_lib import DatabaseError
 
-logger = logging.getLogger(__name__)
+from logging_config import setup_logging
+
+# Create module-specific logger
+logger = setup_logging("batch_processor")
 
 
 def process_all_prompt_responses(db, url_id: int, prompt_responses: Dict[str, Any],
@@ -126,6 +129,7 @@ def process_all_prompt_responses(db, url_id: int, prompt_responses: Dict[str, An
 def extract_job_data_from_responses(prompt_responses: Dict[str, Any]) -> Dict[str, Any]:
     """
     Extract and combine job-related data from multiple prompt responses.
+    Ensures skills without experience data are properly handled.
 
     Args:
         prompt_responses: Dictionary of prompt responses
@@ -174,8 +178,51 @@ def extract_job_data_from_responses(prompt_responses: Dict[str, Any]) -> Dict[st
             if key in jobadvert_response:
                 job_data[key] = jobadvert_response[key]
 
-    # Extract skills, benefits, duties, qualifications if available
-    for data_type in ["skills", "benefits", "duties", "qualifications"]:
+    # Extract skills with experience (special case)
+    if "skills_prompt" in prompt_responses:
+        response = parse_if_string(prompt_responses["skills_prompt"])
+        if "skills" in response:
+            skills_data = response["skills"]
+            # Handle the new format of skills with experience
+            if skills_data and isinstance(skills_data, list):
+                processed_skills = []
+                for skill_item in skills_data:
+                    # Handle tuple format
+                    if isinstance(skill_item, tuple):
+                        if len(skill_item) >= 2:
+                            skill, experience = skill_item
+                        else:
+                            skill, experience = skill_item[0], None
+                        processed_skills.append({
+                            "skill": skill,
+                            "experience": experience
+                        })
+                    # Handle list format (from converted tuples)
+                    elif isinstance(skill_item, list):
+                        if len(skill_item) >= 2:
+                            skill, experience = skill_item[0], skill_item[1]
+                        else:
+                            skill, experience = skill_item[0], None
+                        processed_skills.append({
+                            "skill": skill,
+                            "experience": experience
+                        })
+                    # Handle dictionary format (may come from Pydantic model)
+                    elif isinstance(skill_item, dict) and "skill" in skill_item:
+                        processed_skills.append({
+                            "skill": skill_item["skill"],
+                            "experience": skill_item.get("experience")
+                        })
+                    # Handle string format (for skills without experience)
+                    elif isinstance(skill_item, str):
+                        processed_skills.append({
+                            "skill": skill_item,
+                            "experience": None
+                        })
+                job_data["skills"] = processed_skills
+
+    # Extract other list types (benefits, duties, qualifications)
+    for data_type in ["benefits", "duties", "qualifications"]:
         prompt_key = f"{data_type}_prompt"
         if prompt_key in prompt_responses:
             response = parse_if_string(prompt_responses[prompt_key])
@@ -183,6 +230,7 @@ def extract_job_data_from_responses(prompt_responses: Dict[str, Any]) -> Dict[st
                 job_data[data_type] = response[data_type]
 
     return job_data
+
 
 
 # Individual processing functions for non-transaction mode
@@ -276,12 +324,124 @@ def process_qualifications(db, url_id: int, response: Any) -> None:
         db.insert_qualifications_list(url_id, qualifications)
 
 
+def direct_insert_skills(db, url_id: int, skills_data) -> None:
+    """
+    Directly insert skills data for a URL, bypassing the standard pipeline.
+    Use this as a temporary fix or for backfilling missing data.
+
+    Args:
+        db: Database instance
+        url_id: URL ID
+        skills_data: List of tuples (skill, experience)
+    """
+    logger.info(f"Directly inserting {len(skills_data)} skills for URL ID {url_id}")
+
+    success_count = 0
+    for skill_item in skills_data:
+        try:
+            if isinstance(skill_item, tuple) and len(skill_item) >= 2:
+                skill, experience = skill_item
+                # Normalize "not_listed" to None
+                if experience == "not_listed":
+                    experience = None
+
+                query = "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)"
+                with db._execute_query(query, (url_id, skill, experience)) as cursor:
+                    if cursor.rowcount > 0:
+                        success_count += 1
+                        logger.info(f"Inserted skill: {skill}, experience: {experience}")
+            else:
+                logger.warning(f"Skipping invalid skill format: {skill_item}")
+        except Exception as e:
+            logger.error(f"Error inserting skill {skill_item}: {e}")
+
+    logger.info(f"Direct insertion complete: {success_count} skills inserted")
+
+
 def process_skills(db, url_id: int, response: Any) -> None:
-    """Process skills list."""
+    """
+    Process skills list with experience information.
+
+    Args:
+        db: Database instance
+        url_id: URL ID
+        response: Response object containing skills data
+    """
     data = _ensure_dict(response)
-    skills = data.get("skills")
-    if skills and isinstance(skills, list):
-        db.insert_skills_list(url_id, skills)
+    skills_data = data.get("skills")
+
+    logger.info(f"Processing skills for URL ID {url_id}")
+    logger.info(f"Raw skills data: {skills_data}")
+
+    if not skills_data or not isinstance(skills_data, list):
+        logger.warning(f"No valid skills data found for URL ID {url_id}")
+        return
+
+    # Normalize skills data to handle multiple formats
+    normalized_skills = []
+
+    for item in skills_data:
+        try:
+            # Handle SkillExperience objects (from Pydantic model)
+            if hasattr(item, 'model_dump'):
+                skill_dict = item.model_dump()
+                skill = skill_dict.get('skill', '')
+                experience = skill_dict.get('experience')
+                normalized_skills.append((skill, experience))
+                logger.debug(f"Normalized Pydantic object: ({skill}, {experience})")
+                continue
+
+            # Handle dictionary format with skill key
+            if isinstance(item, dict) and "skill" in item:
+                skill = item["skill"]
+                experience = item.get("experience")
+                normalized_skills.append((skill, experience))
+                logger.debug(f"Normalized dict: ({skill}, {experience})")
+                continue
+
+            # Handle tuple format
+            if isinstance(item, tuple):
+                if len(item) >= 2:
+                    skill, experience = item[0], item[1]
+                else:
+                    skill, experience = item[0], None
+                normalized_skills.append((skill, experience))
+                logger.debug(f"Normalized tuple: ({skill}, {experience})")
+                continue
+
+            # Handle list format (converted from tuple)
+            if isinstance(item, list):
+                if len(item) >= 2:
+                    skill, experience = item[0], item[1]
+                else:
+                    skill, experience = item[0], None
+                normalized_skills.append((skill, experience))
+                logger.debug(f"Normalized list: ({skill}, {experience})")
+                continue
+
+            # Handle string format (for skills without experience data)
+            if isinstance(item, str):
+                normalized_skills.append((item, None))
+                logger.debug(f"Normalized string: ({item}, None)")
+                continue
+
+            # Try to handle other potential formats
+            logger.warning(f"Unrecognized skill format: {type(item).__name__} - {item}")
+            normalized_skills.append((str(item), None))
+
+        except Exception as e:
+            logger.warning(f"Could not process skill item: {item}, error: {e}")
+
+    logger.info(f"Processed {len(normalized_skills)} skills for URL ID {url_id}")
+    logger.info(f"Normalized skills data: {normalized_skills}")
+
+    # Send the normalized skills to the database
+    if normalized_skills:
+        try:
+            db.insert_skills_list(url_id, normalized_skills)
+            logger.info(f"Successfully sent {len(normalized_skills)} skills to insert_skills_list function")
+        except Exception as e:
+            logger.error(f"Error inserting skills for URL ID {url_id}: {e}")
 
 
 def process_attributes(db, url_id: int, response: Any) -> None:

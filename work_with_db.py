@@ -9,7 +9,7 @@ from dataclasses import dataclass, field
 from typing import List, Dict, Any, Union, Optional, Iterator
 
 from dotenv import load_dotenv
-from models import SuspectFormResponse, VictimFormResponse
+from models import SuspectFormResponse
 
 # Load environment variables
 load_dotenv()

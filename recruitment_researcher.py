@@ -14,7 +14,9 @@ import os
 import random
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple
+from typing import Any, Dict, List, Optional, Tuple, Union
+from typing import Any, Dict, List, Optional, Tuple, Union
+from pydantic import BaseModel
 
 import pandas as pd
 import tldextract
@@ -26,6 +28,7 @@ from dotenv import load_dotenv
 from utils import get_model_for_prompt
 
 # Local imports
+from recruitment_models import transform_skills_response
 from get_urls_from_csvs import get_unique_urls_from_csvs
 from prompts import COMPLEX_PROMPTS, LIST_PROMPTS, NON_LIST_PROMPTS
 from recruitment_db_lib import DatabaseError, RecruitmentDatabase
@@ -33,25 +36,19 @@ from recruitment_models import (AgencyResponse, AttributesResponse, BenefitsResp
                                 CompanyResponse, ConfirmResponse, ContactPersonResponse,
                                 EmailResponse, JobAdvertResponse, JobResponse,
                                 LocationResponse, CompanyPhoneNumberResponse, LinkResponse,
-                                SkillsResponse, DutiesResponse, QualificationsResponse,
-                                AdvertResponse)
+                                SkillExperienceResponse, DutiesResponse,
+                                QualificationsResponse, AdvertResponse)
 from response_processor_functions import PromptResponseProcessor, ResponseProcessingError
-from batch_processor import process_all_prompt_responses, extract_job_data_from_responses
+from batch_processor import process_all_prompt_responses, direct_insert_skills
 from web_crawler_lib import crawl_website_sync, WebCrawlerResult
-from batch_processor import process_all_prompt_responses, extract_job_data_from_responses
+
 # Load environment variables
 load_dotenv()
 
-# Configure Logging
-LOG_DIR = Path("logs")
-LOG_DIR.mkdir(exist_ok=True)
-logging.basicConfig(
-    filename=LOG_DIR / "recruitment_research.log",
-    filemode="a",
-    format="%(asctime)s - %(levelname)s - %(message)s",
-    level=logging.INFO,
-)
-logger = logging.getLogger(__name__)
+from logging_config import setup_logging
+
+# Create module-specific logger
+logger = setup_logging("recruitment_researcher")
 
 
 def setup_llm_engine(api_key: Optional[str] = None) -> Tuple[OpenAI, ChatMemoryBuffer]:
@@ -93,18 +90,58 @@ def clean_response_text(response_text: str) -> str:
         return response_text.strip()
 
 
+def process_url_skills(url_id: int, db, chat_engine) -> None:
+    """
+    Process skills specifically for a URL ID.
+    This can be used to backfill skills for URLs that were already processed.
+
+    Args:
+        url_id: The URL ID to process skills for
+        db: Database instance
+        chat_engine: Chat engine for processing
+    """
+    # Check if this URL already has skills
+    query = "SELECT COUNT(*) FROM skills WHERE url_id = ?"
+    with db._execute_query(query, (url_id,)) as cursor:
+        count = cursor.fetchone()[0]
+
+    if count > 0:
+        logger.info(f"URL ID {url_id} already has {count} skills. Skipping.")
+        return
+
+    # Get URL record
+    url_record = db.get_url_by_id(url_id)
+    if not url_record or not url_record.content:
+        logger.warning(f"No content found for URL ID {url_id}")
+        return
+
+    # Get skills using prompt
+    from prompts import COMPLEX_PROMPTS
+    prompt_key = "skills_prompt"
+    prompt_text = COMPLEX_PROMPTS[prompt_key]
+
+    # Process response
+    from recruitment_models import SkillExperienceResponse
+    skills_data = get_validated_response(prompt_key, prompt_text, SkillExperienceResponse, chat_engine)
+
+    if skills_data:
+        # Transform to expected format
+        from recruitment_models import transform_skills_response
+        processed_skills = transform_skills_response(skills_data)
+
+        # Direct insert skills
+        if processed_skills and processed_skills.get('skills'):
+            direct_insert_skills(db, url_id, processed_skills['skills'])
+            logger.info(f"Successfully processed skills for URL ID {url_id}")
+            return True
+
+    logger.warning(f"No skills could be extracted for URL ID {url_id}")
+    return False
+
+
 def get_validated_response(prompt_key: str, prompt_text: str, model_class: Any, chat_engine) -> Optional[Any]:
     """
     Sends a prompt to the chat engine and returns a validated Pydantic model instance with exponential backoff.
-
-    Args:
-        prompt_key: The key identifying the prompt and model
-        prompt_text: The prompt text to send
-        model_class: The Pydantic model to validate the response
-        chat_engine: The chat engine instance for processing the prompt
-
-    Returns:
-        An instance of the Pydantic model or None if validation fails
     """
     max_retries = 5
     base_delay = 5  # Initial delay in seconds
@@ -112,16 +149,79 @@ def get_validated_response(prompt_key: str, prompt_text: str, model_class: Any, 
     for attempt in range(max_retries):
         try:
             response = chat_engine.chat(prompt_text)
-            logger.info(f"Prompt '{prompt_key}' processed successfully.")
+
+            # Log only that we received a response, not that it was processed successfully yet
+            logger.info(f"Received response for '{prompt_key}' (attempt {attempt + 1}/{max_retries})")
 
             response_text = clean_response_text(response.response)
-            response_data = model_class.model_validate_json(response_text)
-            return response_data
+
+            # Special handling for the skills prompt which returns tuples
+            if prompt_key == "skills_prompt":
+                logger.info(f"Skills response_text for skills_prompt yields '{response_text}'.")
+                try:
+                    # If the response contains Python-style tuples, convert them to lists for JSON parsing
+                    if "skills" in response_text and "(" in response_text and ")" in response_text:
+                        # First try direct replacement
+                        modified_text = response_text.replace("(", "[").replace(")", "]")
+                        logger.info(f"Skills modified_text yields '{modified_text}'.")
+                        try:
+                            # Try to parse the JSON with replaced brackets
+                            response_json = json.loads(modified_text)
+
+                            # Check for skills array
+                            if 'skills' in response_json and isinstance(response_json['skills'], list):
+                                # Process the skills
+                                processed_skills = []
+
+                                for item in response_json['skills']:
+                                    # Now item should be a list (previously a tuple)
+                                    if isinstance(item, list):
+                                        if len(item) >= 2:
+                                            skill = item[0]
+                                            # Convert "not_listed" to None
+                                            experience = None if item[1] == "not_listed" else item[1]
+                                            processed_skills.append({"skill": skill, "experience": experience})
+                                        else:
+                                            processed_skills.append({"skill": item[0], "experience": None})
+                                    elif isinstance(item, str):
+                                        processed_skills.append({"skill": item, "experience": None})
+
+                                # Create proper response object
+                                response_data = {"skills": processed_skills}
+                                logger.info(f"Skills prompt yields '{response_data}' after transformation.")
+
+                                # Try to validate with model
+                                try:
+                                    validated_data = model_class.model_validate(response_data)
+                                    logger.info(f"Skills prompt '{prompt_key}' processed successfully.")
+                                    logger.info(f"Skills prompt yields '{validated_data}' after transformation.")
+                                    return validated_data
+                                except Exception as e:
+                                    logger.error(f"Skills validation error after transformation: {e}")
+                                    # Fall back to returning a dictionary directly
+                                    return response_data
+                        except json.JSONDecodeError:
+                            logger.warning(f"Failed to parse modified JSON for skills prompt, attempt {attempt + 1}")
+
+                    # If we reach here, more manual parsing may be needed
+                    logger.info(f"Attempting manual parsing for skills response")
+
+                except Exception as e:
+                    logger.error(f"Error processing skills response: {e}")
+
+            # Standard handling for other prompts
+            try:
+                response_data = model_class.model_validate_json(response_text)
+                logger.info(f"Prompt '{prompt_key}' processed successfully.")
+                return response_data
+            except Exception as e:
+                logger.error(f"Validation error for '{prompt_key}': {e}")
+                # Continue to next attempt
 
         except json.JSONDecodeError as e:
             logger.error(f"JSON decoding failed for '{prompt_key}' (attempt {attempt + 1}/{max_retries}): {e}")
             logger.debug(f"Raw response: {response.response[:500]}...")
-            # Retry with the next attempt rather than returning None immediately
+            # Retry with the next attempt
         except Exception as e:
             if "429 Too Many Requests" in str(e):
                 delay = base_delay * (2 ** attempt) + random.uniform(0, 1)
@@ -129,12 +229,14 @@ def get_validated_response(prompt_key: str, prompt_text: str, model_class: Any, 
                 time.sleep(delay)
                 continue
             else:
-                logger.error(f"Failed to parse response for '{prompt_key}': {e}")
-                if attempt == max_retries - 1:
-                    return None
+                logger.error(f"Unexpected error for '{prompt_key}': {e}")
+                # Continue to next attempt
 
     logger.error(f"Max retries reached for '{prompt_key}'. Skipping...")
     return None
+
+# Modification to batch_processor.py
+# Replace the process_skills function with this improved version:
 
 
 def verify_recruitment(url: str, chat_engine) -> Tuple[Dict[str, Any], List[str]]:
@@ -225,7 +327,16 @@ def collect_prompt_responses(chat_engine) -> Dict[str, Any]:
 
         response_data = get_validated_response(prompt_key, prompt_text, model_class, chat_engine)
         if response_data:
-            prompt_responses[prompt_key] = response_data
+            # Handle skills response specially to transform to tuple format
+            if prompt_key == "skills_prompt":
+                # Convert to dict if it's a model object
+                if hasattr(response_data, 'model_dump'):
+                    data_dict = response_data.model_dump()
+                else:
+                    data_dict = response_data
+                prompt_responses[prompt_key] = transform_skills_response(data_dict)
+            else:
+                prompt_responses[prompt_key] = response_data
 
     # Process COMPLEX_PROMPTS
     for prompt_key, prompt_text in COMPLEX_PROMPTS.items():
@@ -454,52 +565,9 @@ def process_url(url: str, db: RecruitmentDatabase, processor: PromptResponseProc
             return True
 
         # Collect responses for all prompts
-        prompt_responses = {}
-
-        # Process recruitment prompt
-        recruitment_key = "recruitment_prompt"
-        recruitment_text = LIST_PROMPTS[recruitment_key]
-        recruitment_data = get_validated_response(
-            recruitment_key, recruitment_text, AdvertResponse, chat_engine
-        )
-        if recruitment_data:
-            prompt_responses[recruitment_key] = recruitment_data
-
-        # Process NON_LIST_PROMPTS
-        for prompt_key, prompt_text in NON_LIST_PROMPTS.items():
-            model_class = get_model_for_prompt(prompt_key)
-            if not model_class:
-                logger.warning(f"No model class found for prompt key: {prompt_key}")
-                continue
-
-            response_data = get_validated_response(prompt_key, prompt_text, model_class, chat_engine)
-            if response_data:
-                prompt_responses[prompt_key] = response_data
-
-        # Process LIST_PROMPTS (excluding recruitment prompt which was already processed)
-        for prompt_key, prompt_text in {k: v for k, v in LIST_PROMPTS.items() if k != "recruitment_prompt"}.items():
-            model_class = get_model_for_prompt(prompt_key)
-            if not model_class:
-                logger.warning(f"No model class found for prompt key: {prompt_key}")
-                continue
-
-            response_data = get_validated_response(prompt_key, prompt_text, model_class, chat_engine)
-            if response_data:
-                prompt_responses[prompt_key] = response_data
-
-        # Process COMPLEX_PROMPTS
-        for prompt_key, prompt_text in COMPLEX_PROMPTS.items():
-            model_class = get_model_for_prompt(prompt_key)
-            if not model_class:
-                logger.warning(f"No model class found for prompt key: {prompt_key}")
-                continue
-
-            response_data = get_validated_response(prompt_key, prompt_text, model_class, chat_engine)
-            if response_data:
-                prompt_responses[prompt_key] = response_data
+        prompt_responses = collect_prompt_responses(chat_engine)
 
         # Process all responses using batch processor
-
         try:
             results = process_all_prompt_responses(
                 db,
@@ -529,6 +597,7 @@ def process_url(url: str, db: RecruitmentDatabase, processor: PromptResponseProc
         logger.error(f"Unexpected error processing URL {url}: {e}", exc_info=True)
         return False
 
+
 def filter_valid_urls(urls: List[str]) -> List[str]:
     """
     Filter out invalid URLs from a list.
@@ -556,6 +625,69 @@ def filter_valid_urls(urls: List[str]) -> List[str]:
     return valid_urls
 
 
+def backfill_skills(args, db, processor, llm, memory):
+    """
+    Backfill skills for URLs that already exist in the database but are missing skills.
+    """
+    # Get all URLs with recruitment_flag = 1 (confirmed recruitment)
+    query = """
+        SELECT u.id, u.url FROM urls u
+        LEFT JOIN (
+            SELECT url_id, COUNT(*) as skill_count 
+            FROM skills 
+            GROUP BY url_id
+        ) s ON u.id = s.url_id
+        WHERE u.recruitment_flag = 1 
+        AND (s.skill_count IS NULL OR s.skill_count = 0)
+        ORDER BY u.id
+    """
+
+    with db._execute_query(query) as cursor:
+        urls_missing_skills = cursor.fetchall()
+
+    if not urls_missing_skills:
+        logger.info("No URLs missing skills found")
+        return
+
+    logger.info(f"Found {len(urls_missing_skills)} URLs missing skills")
+
+    for url_id, url in urls_missing_skills:
+        logger.info(f"Processing skills for URL ID {url_id}: {url}")
+        try:
+            # Get content
+            url_record = db.get_url_by_id(url_id)
+            if not url_record or not url_record.content:
+                logger.warning(f"No content found for URL ID {url_id}")
+                continue
+
+            # Process skills
+            from web_crawler_lib import WebCrawlerResult
+            from llama_index.core import Document as liDocument
+            from llama_index.core import VectorStoreIndex
+
+            documents = [liDocument(text=url_record.content)]
+            index = VectorStoreIndex.from_documents(documents)
+            memory.reset()
+            chat_engine = index.as_chat_engine(
+                chat_mode="context",
+                llm=llm,
+                memory=memory,
+                system_prompt=(
+                    "You are a career recruitment analyst with deep insight into the skills and job market. "
+                    "Your express goal is to investigate online adverts and extract pertinent factual detail."
+                )
+            )
+
+            success = process_url_skills(url_id, db, chat_engine)
+
+            if success:
+                logger.info(f"Successfully backfilled skills for URL ID {url_id}")
+            else:
+                logger.warning(f"Failed to backfill skills for URL ID {url_id}")
+
+        except Exception as e:
+            logger.error(f"Error backfilling skills for URL ID {url_id}: {e}")
+
 def main():
     """Main function to run the recruitment URL processing."""
     parser = argparse.ArgumentParser(description="Process URLs to extract recruitment data")
@@ -579,16 +711,27 @@ def main():
                         help="Disable transaction support (not recommended)")
     parser.add_argument("--skip-validation", action="store_true",
                         help="Skip URL validation (not recommended)")
+    parser.add_argument("--backfill-skills", action="store_true",
+                        help="Backfill skills for URLs that are missing them")
 
     args = parser.parse_args()
 
     # Initialize database and processor
     db = RecruitmentDatabase()
     processor = PromptResponseProcessor(db)
-
+    # Run diagnostics to check for issues with skills table
+    # db.check_skills_table_schema()
+    # # Test direct skill insertion with a dummy URL ID (use an ID you know exists)
+    # known_url_id = 1  # Change this to an actual URL ID from your database
+    # db.test_skill_insertion(known_url_id)
     # Set up LLM and memory
     llm, memory = setup_llm_engine(args.api_key)
 
+    if args.backfill_skills:
+        print("Starting skills backfill process...")
+        backfill_skills(args, db, processor, llm, memory)
+        print("Skills backfill completed.")
+        return
     # Process a single URL if specified
     if args.single_url:
         # Validate the URL if validation is enabled
@@ -680,6 +823,7 @@ def main():
 
     print(f"\nProcessing completed. {success_count} URLs succeeded, {failure_count} failed.")
     logger.info(f"Batch processing completed. {success_count} URLs succeeded, {failure_count} failed.")
+
 
 if __name__ == "__main__":
     main()

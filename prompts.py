@@ -2,20 +2,15 @@
 LIST_PROMPTS = {
     "benefits_prompt": (
         "Assistant, please extract the benefits offered to successful candidates of the advertised job(s) from this article, if any. "
+        "Benefits are the perks, incentives, or rewards that the successful candidate will receive as part of their employment. "
         "Return your answer in the following JSON format:\n"
         "{\n"
         '  "benefits": ["benefit1", "benefit1", "benefit1"] or null\n'
         "}"
     ),
-    "skills_prompt": (
-        "Assistant, please extract the skills required of candidates of the advertised job(s) from this article, if any. "
-        "Return your answer in the following JSON format:\n"
-        "{\n"
-        '  "skills": ["skill1", "skill2", "skill3"] or null\n'
-        "}"
-    ),
     "attributes_prompt": (
         "Assistant, please extract the attributes required of candidates of the advertised job(s) from this article, if any. "
+        "Attributes are personal qualities, characteristics, or traits that are explicitly stated to be essential for the advertised job(s). "
         "Return your answer in the following JSON format:\n"
         "{\n"
         '  "attributes": ["attribute1", "attribute2", "attribute3"] or null\n'
@@ -23,13 +18,15 @@ LIST_PROMPTS = {
     ),
     "duties_prompt": (
         "Assistant, please extract the duties and responsibilities that will be required of the candidate as stipulated by this advertised job(s), if any. "
+        "Duties are the tasks and responsibilities that the succesful candidate will be expected to perform. "
         "Return your answer in the following JSON format:\n"
         "{\n"
         '  "duties": ["duty1", "duty2", "duty3"] or null\n'
         "}"
     ),
     "qualifications_prompt": (
-        "Assistant, please extract the qualifications need of a successful candidate as stipulated by this advertised job(s), if any. "
+        "Assistant, please extract the qualifications needed of a successful candidate as stipulated by this advertised job(s), if any. "
+        "Qualifications are strictly diplomas, degrees, certificates, or any other form of educational attainment. "
         "Return your answer in the following JSON format:\n"
         "{\n"
         '  "qualifications": ["qualification1", "qualification2", "qualification3"] or null\n'
@@ -113,7 +110,7 @@ COMPLEX_PROMPTS = {
         "}"
     ),
     "jobadvert_prompt": (
-        "Assistant, please extract the following details: a description of the job, the salary, the duration, the start date, the end date, the posted date, and the application deadline for the advertised job(s) from this article, if any. "
+        "Assistant, please extract the following details: a description of the job, the  in monetary value of salary or remuneration, the duration, the start date, the end date, the posted date of the advert, and the application deadline for the advertised job(s) from this article, if any. "
         "Return your answer in the following JSON format:\n"
         "{\n"
         '  "description": "description" or null,\n'
@@ -123,6 +120,18 @@ COMPLEX_PROMPTS = {
         '  "end_date": "YYYY-MM-DD" or null,\n'
         '  "posted_date": "YYYY-MM-DD" or null,\n'
         '  "application_deadline": "YYYY-MM-DD" or null\n'
+        "}"
+    ),
+        "skills_prompt": (
+        "Assistant, please extract the skills with associated experience required of candidates"
+        " of the advertised job(s) from this text, if any. "
+        "Skills are job related abilities that are required to perform the advertised job(s) as explicitly stated in the advert. "
+        " These are not 'soft skills' or personal strengths such as problem-solving abilities, qualities, traits  or characteristics. "
+        " Experience is associated with a particular skill and is the number of years of experience required to perform the job. "
+        " If experience is not explicitly stated, please leave it as 'not_listed' and nothing else. "
+        "Return your answer strictly in the following JSON format:\n"
+        "{\n"
+        '  "skills": [("skill1", "experience1"), ("skill2", "experience2"), ("skill3", "not_listed")] or null\n'
         "}"
     ),
 }

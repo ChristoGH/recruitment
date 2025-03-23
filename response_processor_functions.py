@@ -1,13 +1,17 @@
 import json
 import logging
-from typing import Dict, List, Any, Optional, Union
+# Add or update this import line at the top of response_processor_functions.py
+
+from typing import Dict, List, Any, Optional, Union, Tuple
 from pydantic import BaseModel, ValidationError
 
 # Import the model mapping functionality
 from utils import get_model_for_prompt
 
-# Set up logging
-logger = logging.getLogger(__name__)
+from logging_config import setup_logging
+
+# Create module-specific logger
+logger = setup_logging("response_processor_functions")
 
 
 class ResponseProcessingError(Exception):
@@ -264,5 +268,156 @@ class PromptResponseProcessor:
         number = data.get("number")
         if number:
             self.db.insert_company_phone_number(url_id, number)
+
+    # Additional utility methods for the PromptResponseProcessor class
+
+    def parse_skills_data(self, prompt_responses: Dict[str, Any]) -> List[Tuple[str, Optional[str]]]:
+        """
+        Extract and parse skills data from a dict of prompt responses.
+
+        Args:
+            prompt_responses: Dictionary of prompt responses
+
+        Returns:
+            List of (skill, experience) tuples
+        """
+        if "skills_prompt" not in prompt_responses:
+            return []
+
+        # Get the skills response
+        skills_response = self._parse_response(prompt_responses["skills_prompt"])
+
+        # Extract skills data
+        skills_data = skills_response.get("skills", [])
+
+        # Transform to standard format
+        return self._transform_skills_data(skills_data)
+
+    def combine_responses(self, prompt_responses: Dict[str, Any]) -> Dict[str, Any]:
+        """
+        Combine multiple prompt responses into a unified job data structure.
+
+        Args:
+            prompt_responses: Dictionary mapping prompt types to their responses
+
+        Returns:
+            Combined job data
+        """
+        job_data = {}
+
+        # Process each response type
+        for prompt_type, response in prompt_responses.items():
+            try:
+                # Parse the response
+                parsed_data = self._parse_response(response)
+
+                # Add data based on prompt type
+                if prompt_type == "job_prompt" and "title" in parsed_data:
+                    job_data["job_title"] = parsed_data["title"]
+
+                elif prompt_type == "company_prompt" and "company" in parsed_data:
+                    job_data["company"] = parsed_data["company"]
+
+                elif prompt_type == "location_prompt":
+                    job_data["location"] = {
+                        "country": parsed_data.get("country"),
+                        "province": parsed_data.get("province"),
+                        "city": parsed_data.get("city"),
+                        "street_address": parsed_data.get("street_address")
+                    }
+
+                elif prompt_type == "jobadvert_prompt":
+                    for key in ["description", "salary", "duration", "start_date",
+                                "end_date", "posted_date", "application_deadline"]:
+                        if key in parsed_data:
+                            job_data[key] = parsed_data[key]
+
+                elif prompt_type == "skills_prompt" and "skills" in parsed_data:
+                    # Transform skills data to include experience
+                    skills_data = parsed_data["skills"]
+                    processed_skills = []
+
+                    # Handle different formats
+                    for item in self._transform_skills_data(skills_data):
+                        skill, experience = item
+                        processed_skills.append({
+                            "skill": skill,
+                            "experience": experience
+                        })
+
+                    job_data["skills"] = processed_skills
+
+                elif prompt_type in ["benefits_prompt", "duties_prompt", "qualifications_prompt"]:
+                    # Extract the data field name (remove "_prompt" suffix)
+                    field_name = prompt_type.replace("_prompt", "")
+                    data_field = parsed_data.get(field_name, [])
+
+                    if data_field and isinstance(data_field, list):
+                        job_data[field_name] = data_field
+
+            except Exception as e:
+                logger.warning(f"Error combining response for {prompt_type}: {e}")
+
+        return job_data
+
+    def process_all_responses(self, url_id: int, prompt_responses: Dict[str, Any],
+                              use_transaction: bool = True) -> Dict[str, Any]:
+        """
+        Process all prompt responses for a URL, with transaction support.
+
+        Args:
+            url_id: The URL ID
+            prompt_responses: Dictionary of prompt responses
+            use_transaction: Whether to use transactions
+
+        Returns:
+            Dict with processing results
+        """
+        results = {
+            "success": True,
+            "processed": 0,
+            "failed": 0,
+            "errors": []
+        }
+
+        if use_transaction and hasattr(self.db, "process_prompt_responses_in_transaction"):
+            # Process with transaction
+            try:
+                parsed_responses = {}
+                for prompt_type, response in prompt_responses.items():
+                    try:
+                        parsed_responses[prompt_type] = self._parse_response(response)
+                        results["processed"] += 1
+                    except Exception as e:
+                        results["failed"] += 1
+                        results["errors"].append({
+                            "prompt_type": prompt_type,
+                            "error": str(e)
+                        })
+
+                if parsed_responses:
+                    self.db.process_prompt_responses_in_transaction(url_id, parsed_responses)
+
+            except Exception as e:
+                logger.error(f"Transaction processing failed: {e}")
+                results["success"] = False
+                results["errors"].append({
+                    "prompt_type": "transaction",
+                    "error": str(e)
+                })
+        else:
+            # Process individually
+            for prompt_type, response in prompt_responses.items():
+                try:
+                    self.process_response(url_id, prompt_type, response)
+                    results["processed"] += 1
+                except Exception as e:
+                    results["failed"] += 1
+                    results["errors"].append({
+                        "prompt_type": prompt_type,
+                        "error": str(e)
+                    })
+
+        return results
 
     # Additional processor methods would follow...
