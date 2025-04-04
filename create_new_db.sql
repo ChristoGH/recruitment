@@ -1,33 +1,28 @@
-# webcrawler
-# recruitment
+-- Drop existing tables if they exist
+DROP TABLE IF EXISTS job_agencies;
+DROP TABLE IF EXISTS job_companies;
+DROP TABLE IF EXISTS job_qualifications;
+DROP TABLE IF EXISTS job_skills;
+DROP TABLE IF EXISTS job_urls;
+DROP TABLE IF EXISTS agencies;
+DROP TABLE IF EXISTS companies;
+DROP TABLE IF EXISTS qualifications;
+DROP TABLE IF EXISTS skills;
+DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS urls;
 
-# Recruitment Database Schema
+-- Create new database
+ATTACH DATABASE 'databases/recruitment_new.db' AS new_db;
 
-## Overview
-This document outlines the new database schema for the recruitment system. The schema is designed to be more normalized and maintainable than the previous version.
+-- Create core tables
+CREATE TABLE IF NOT EXISTS agencies (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
 
-## Database Migration Notes
-- The migration process moves data from `recruitment.db` to `recruitment_new.db`
-- The old database uses singular table names (e.g., `company`, `agency`)
-- The new database uses plural table names (e.g., `companies`, `agencies`)
-- The `hiring_company` table from the old database is not used and has been removed
-- Companies are distinguished from agencies based on their role:
-  - Companies: Organizations hiring for positions
-  - Agencies: Recruitment firms that post jobs on behalf of companies
-
-## Naming Conventions
-- Table names are plural, lowercase, and use underscores
-- Primary keys are named `id`
-- Foreign keys follow the pattern `table_name_id`
-- Relationship tables use the pattern `table1_table2`
-- Timestamps use `created_at` and `updated_at`
-
-## Core Tables
-
-### urls
-Primary entry point for all crawled URLs.
-```sql
-CREATE TABLE urls (
+CREATE TABLE IF NOT EXISTS urls (
     id INTEGER PRIMARY KEY,
     url TEXT UNIQUE NOT NULL,
     domain_name TEXT,
@@ -35,12 +30,15 @@ CREATE TABLE urls (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-```
 
-### jobs
-Core job information.
-```sql
-CREATE TABLE jobs (
+CREATE TABLE IF NOT EXISTS companies (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS jobs (
     id INTEGER PRIMARY KEY,
     title TEXT NOT NULL,
     description TEXT,
@@ -51,12 +49,8 @@ CREATE TABLE jobs (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-```
 
-### adverts
-Job advertisement details.
-```sql
-CREATE TABLE adverts (
+CREATE TABLE IF NOT EXISTS adverts (
     id INTEGER PRIMARY KEY,
     job_id INTEGER NOT NULL,
     posted_date DATE,
@@ -67,128 +61,62 @@ CREATE TABLE adverts (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE
 );
-```
 
-### companies
-Organizations hiring for positions.
-```sql
-CREATE TABLE companies (
+CREATE TABLE IF NOT EXISTS skills (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-```
 
-### agencies
-Recruitment firms that post jobs on behalf of companies.
-```sql
-CREATE TABLE agencies (
+CREATE TABLE IF NOT EXISTS qualifications (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-```
 
-### skills
-Job skills.
-```sql
-CREATE TABLE skills (
+CREATE TABLE IF NOT EXISTS attributes (
     id INTEGER PRIMARY KEY,
     name TEXT NOT NULL UNIQUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-```
 
-### qualifications
-Required qualifications.
-```sql
-CREATE TABLE qualifications (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-### attributes
-Job attributes.
-```sql
-CREATE TABLE attributes (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-### duties
-Job duties.
-```sql
-CREATE TABLE duties (
+CREATE TABLE IF NOT EXISTS duties (
     id INTEGER PRIMARY KEY,
     description TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-```
 
-### locations
-Geographic locations.
-```sql
-CREATE TABLE locations (
-    id INTEGER PRIMARY KEY,
-    country TEXT NOT NULL,
-    province TEXT,
-    city TEXT,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-```
-
-### phones
-Phone numbers.
-```sql
-CREATE TABLE phones (
+CREATE TABLE IF NOT EXISTS phones (
     id INTEGER PRIMARY KEY,
     number TEXT NOT NULL,
     type TEXT CHECK(type IN ('mobile', 'landline', 'fax')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-```
 
-### emails
-Email addresses.
-```sql
-CREATE TABLE emails (
+CREATE TABLE IF NOT EXISTS emails (
     id INTEGER PRIMARY KEY,
-    address TEXT NOT NULL,
+    email TEXT NOT NULL,
+    url_id INTEGER,
     type TEXT CHECK(type IN ('primary', 'secondary', 'work')),
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (url_id) REFERENCES urls(id) ON DELETE CASCADE
 );
-```
 
-### benefits
-Job benefits.
-```sql
-CREATE TABLE benefits (
+CREATE TABLE IF NOT EXISTS benefits (
     id INTEGER PRIMARY KEY,
     description TEXT NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
-```
 
-## Relationship Tables
-
-### job_urls
-Links jobs to URLs.
-```sql
-CREATE TABLE job_urls (
+-- Create relationship tables
+CREATE TABLE IF NOT EXISTS job_urls (
     job_id INTEGER NOT NULL,
     url_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -196,12 +124,8 @@ CREATE TABLE job_urls (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (url_id) REFERENCES urls(id) ON DELETE CASCADE
 );
-```
 
-### job_skills
-Links jobs to skills with experience levels.
-```sql
-CREATE TABLE job_skills (
+CREATE TABLE IF NOT EXISTS job_skills (
     job_id INTEGER NOT NULL,
     skill_id INTEGER NOT NULL,
     experience TEXT CHECK(experience IN ('entry', 'intermediate', 'senior', 'expert')),
@@ -210,12 +134,8 @@ CREATE TABLE job_skills (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
 );
-```
 
-### job_qualifications
-Links jobs to qualifications.
-```sql
-CREATE TABLE job_qualifications (
+CREATE TABLE IF NOT EXISTS job_qualifications (
     job_id INTEGER NOT NULL,
     qualification_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -223,12 +143,8 @@ CREATE TABLE job_qualifications (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (qualification_id) REFERENCES qualifications(id) ON DELETE CASCADE
 );
-```
 
-### job_attributes
-Links jobs to attributes.
-```sql
-CREATE TABLE job_attributes (
+CREATE TABLE IF NOT EXISTS job_attributes (
     job_id INTEGER NOT NULL,
     attribute_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -236,12 +152,8 @@ CREATE TABLE job_attributes (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (attribute_id) REFERENCES attributes(id) ON DELETE CASCADE
 );
-```
 
-### job_companies
-Links jobs to companies.
-```sql
-CREATE TABLE job_companies (
+CREATE TABLE IF NOT EXISTS job_companies (
     job_id INTEGER NOT NULL,
     company_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -249,12 +161,8 @@ CREATE TABLE job_companies (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE
 );
-```
 
-### job_agencies
-Links jobs to agencies.
-```sql
-CREATE TABLE job_agencies (
+CREATE TABLE IF NOT EXISTS job_agencies (
     job_id INTEGER NOT NULL,
     agency_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -262,12 +170,8 @@ CREATE TABLE job_agencies (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE
 );
-```
 
-### job_duties
-Links jobs to duties.
-```sql
-CREATE TABLE job_duties (
+CREATE TABLE IF NOT EXISTS job_duties (
     job_id INTEGER NOT NULL,
     duty_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -275,12 +179,8 @@ CREATE TABLE job_duties (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (duty_id) REFERENCES duties(id) ON DELETE CASCADE
 );
-```
 
-### job_locations
-Links jobs to locations.
-```sql
-CREATE TABLE job_locations (
+CREATE TABLE IF NOT EXISTS job_locations (
     job_id INTEGER NOT NULL,
     location_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -288,12 +188,8 @@ CREATE TABLE job_locations (
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (location_id) REFERENCES locations(id) ON DELETE CASCADE
 );
-```
 
-### company_phones
-Links companies to phone numbers.
-```sql
-CREATE TABLE company_phones (
+CREATE TABLE IF NOT EXISTS company_phones (
     company_id INTEGER NOT NULL,
     phone_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -301,12 +197,8 @@ CREATE TABLE company_phones (
     FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
     FOREIGN KEY (phone_id) REFERENCES phones(id) ON DELETE CASCADE
 );
-```
 
-### agency_phones
-Links agencies to phone numbers.
-```sql
-CREATE TABLE agency_phones (
+CREATE TABLE IF NOT EXISTS agency_phones (
     agency_id INTEGER NOT NULL,
     phone_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -314,12 +206,8 @@ CREATE TABLE agency_phones (
     FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
     FOREIGN KEY (phone_id) REFERENCES phones(id) ON DELETE CASCADE
 );
-```
 
-### company_emails
-Links companies to email addresses.
-```sql
-CREATE TABLE company_emails (
+CREATE TABLE IF NOT EXISTS company_emails (
     company_id INTEGER NOT NULL,
     email_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -327,12 +215,8 @@ CREATE TABLE company_emails (
     FOREIGN KEY (company_id) REFERENCES companies(id) ON DELETE CASCADE,
     FOREIGN KEY (email_id) REFERENCES emails(id) ON DELETE CASCADE
 );
-```
 
-### agency_emails
-Links agencies to email addresses.
-```sql
-CREATE TABLE agency_emails (
+CREATE TABLE IF NOT EXISTS agency_emails (
     agency_id INTEGER NOT NULL,
     email_id INTEGER NOT NULL,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
@@ -340,12 +224,8 @@ CREATE TABLE agency_emails (
     FOREIGN KEY (agency_id) REFERENCES agencies(id) ON DELETE CASCADE,
     FOREIGN KEY (email_id) REFERENCES emails(id) ON DELETE CASCADE
 );
-```
 
-### url_processing_status
-Tracks URL processing status.
-```sql
-CREATE TABLE url_processing_status (
+CREATE TABLE IF NOT EXISTS url_processing_status (
     url_id INTEGER PRIMARY KEY,
     status TEXT CHECK(status IN ('pending', 'processing', 'completed', 'failed')),
     last_processed_at TIMESTAMP,
@@ -354,19 +234,18 @@ CREATE TABLE url_processing_status (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (url_id) REFERENCES urls(id) ON DELETE CASCADE
 );
-```
 
-## Migration Strategy
-1. Create new database with the schema above
-2. Create migration scripts to:
-   - Map existing data to new schema
-   - Preserve relationships
-   - Handle data transformation
-3. Validate data integrity
-4. Switch application to new database
-
-## Next Steps
-1. Create migration scripts
-2. Update application code
-3. Test data integrity
-4. Deploy changes
+-- Create indexes
+CREATE INDEX IF NOT EXISTS idx_jobs_status ON jobs(status);
+CREATE INDEX IF NOT EXISTS idx_jobs_title ON jobs(title);
+CREATE INDEX IF NOT EXISTS idx_urls_domain ON urls(domain_name);
+CREATE INDEX IF NOT EXISTS idx_url_processing_status ON url_processing_status(status);
+CREATE INDEX IF NOT EXISTS idx_companies_name ON companies(name);
+CREATE INDEX IF NOT EXISTS idx_agencies_name ON agencies(name);
+CREATE INDEX IF NOT EXISTS idx_skills_name ON skills(name);
+CREATE INDEX IF NOT EXISTS idx_qualifications_name ON qualifications(name);
+CREATE INDEX IF NOT EXISTS idx_attributes_name ON attributes(name);
+CREATE INDEX IF NOT EXISTS idx_duties_description ON duties(description);
+CREATE INDEX IF NOT EXISTS idx_locations_country ON locations(country);
+CREATE INDEX IF NOT EXISTS idx_locations_province ON locations(province);
+CREATE INDEX IF NOT EXISTS idx_locations_city ON locations(city); 

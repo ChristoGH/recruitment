@@ -372,7 +372,7 @@ def validate_and_normalize_url(url: str) -> Tuple[bool, str, Optional[str]]:
     # If no protocol, try to add https:// (most common)
     if not has_protocol:
         # Check if it might be a search query or invalid URL
-        if url.startswith('/') or '?' in url or ' ' in url or url.startswith('('):
+        if url.startswith('/') or ' ' in url or url.startswith('('):
             return False, url, f"Invalid URL format: {url}"
 
         # Try adding https:// to URLs that might be missing the protocol
@@ -389,7 +389,21 @@ def validate_and_normalize_url(url: str) -> Tuple[bool, str, Optional[str]]:
         if not parsed.domain:
             return False, url, f"URL has no valid domain: {url}"
 
-        # Check for common search query patterns that shouldn't be crawled
+        # Special handling for known job board domains
+        known_job_boards = {
+            'simplyhired': ['search'],  # Add more job boards and their search paths as needed
+            'indeed': ['viewjob', 'jobs'],
+            'linkedin': ['jobs', 'job'],
+            'glassdoor': ['job-listing', 'jobs'],
+            'careerjet': ['job']
+        }
+
+        # Check if this is a known job board
+        if parsed.domain in known_job_boards:
+            # These are valid search/job URLs, don't filter them
+            return True, url, None
+
+        # For other domains, check for common search query patterns that shouldn't be crawled
         if any(q in url for q in ['?q=', '/search?', 'query=', 'find=']):
             return False, url, f"URL appears to be a search query: {url}"
 
