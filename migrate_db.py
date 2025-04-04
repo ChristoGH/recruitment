@@ -433,6 +433,20 @@ def create_emails_table(conn: sqlite3.Connection) -> None:
         logging.error(f"Error creating emails table: {e}")
         raise
 
+def create_benefits_table(new_conn):
+    """Create the benefits table in the new database."""
+    new_cursor = new_conn.cursor()
+    new_cursor.execute("""
+        CREATE TABLE IF NOT EXISTS benefits (
+            id INTEGER PRIMARY KEY,
+            description TEXT NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    new_conn.commit()
+    logger.info("Created benefits table in new database")
+
 def map_experience_level(experience):
     if not experience:
         return 'entry'  # Default to entry level if no experience specified
@@ -1727,11 +1741,13 @@ def migrate_emails(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) -
         old_cursor = old_conn.cursor()
         new_cursor = new_conn.cursor()
 
-        # Get all emails from both tables in old database
+        # Get all emails from all three tables in old database
         old_cursor.execute("""
             SELECT id, url_id, email, 'primary' as type FROM email
             UNION ALL
             SELECT id, url_id, email, 'work' as type FROM company_email
+            UNION ALL
+            SELECT id, url_id, email, 'secondary' as type FROM emails
             WHERE email IS NOT NULL AND TRIM(email) != ''
         """)
         emails = old_cursor.fetchall()
@@ -1750,7 +1766,7 @@ def migrate_emails(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) -
                     continue
 
                 # Check if email already exists
-                new_cursor.execute("SELECT id FROM emails WHERE email = ?", (email,))
+                new_cursor.execute("SELECT id FROM emails WHERE email = ? AND url_id = ?", (email, url_id))
                 if new_cursor.fetchone() is not None:
                     skip_count += 1
                     continue
@@ -1781,6 +1797,80 @@ def migrate_emails(old_conn: sqlite3.Connection, new_conn: sqlite3.Connection) -
     except sqlite3.Error as e:
         logging.error(f"Error during emails migration: {e}")
         raise
+
+def migrate_benefits(old_conn, new_conn):
+    """Migrate benefits from old database to new database."""
+    old_cursor = old_conn.cursor()
+    new_cursor = new_conn.cursor()
+    
+    # Check if benefits table exists in old database
+    old_cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='benefits'")
+    if not old_cursor.fetchone():
+        logger.warning("Benefits table not found in old database")
+        return
+    
+    # Get all benefits from old database
+    old_cursor.execute("SELECT id, url_id, benefit FROM benefits")
+    benefits = old_cursor.fetchall()
+    
+    # Insert benefits into new database
+    successful = 0
+    skipped = 0
+    errors = 0
+    
+    for benefit_record in benefits:
+        try:
+            benefit_id = benefit_record[0]
+            url_id = benefit_record[1]
+            description = benefit_record[2].strip() if benefit_record[2] else None
+            
+            if description:
+                new_cursor.execute("""
+                    INSERT INTO benefits (id, description, created_at, updated_at)
+                    VALUES (?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+                """, (benefit_id, description))
+                successful += 1
+            else:
+                skipped += 1
+        except sqlite3.IntegrityError as e:
+            if "UNIQUE constraint failed" in str(e):
+                skipped += 1
+                logger.debug(f"Skipped duplicate benefit: {description}")
+            else:
+                errors += 1
+                logger.error(f"Error inserting benefit '{description}': {e}")
+        except Exception as e:
+            errors += 1
+            logger.error(f"Unexpected error inserting benefit '{description}': {e}")
+    
+    new_conn.commit()
+    logger.info(f"Benefits migration completed: {successful} successful, {skipped} skipped, {errors} errors")
+
+def verify_benefits_migration(old_conn, new_conn):
+    """Verify that benefits were migrated correctly."""
+    old_cursor = old_conn.cursor()
+    new_cursor = new_conn.cursor()
+    
+    # Check if benefits table exists in old database
+    old_cursor.execute("SELECT name FROM sqlite_master WHERE type='table' AND name='benefits'")
+    if not old_cursor.fetchone():
+        logger.warning("Benefits table not found in old database, skipping verification")
+        return
+    
+    # Count benefits in old database
+    old_cursor.execute("SELECT COUNT(*) FROM benefits")
+    old_count = old_cursor.fetchone()[0]
+    
+    # Count benefits in new database
+    new_cursor.execute("SELECT COUNT(*) FROM benefits")
+    new_count = new_cursor.fetchone()[0]
+    
+    logger.info(f"Benefits migration verification: {old_count} in old database, {new_count} in new database")
+    
+    if old_count != new_count:
+        logger.warning(f"Benefits count mismatch: {old_count} in old database, {new_count} in new database")
+    else:
+        logger.info("Benefits migration verified successfully")
 
 def backup_database():
     """Create a backup of the existing database."""
@@ -1839,6 +1929,165 @@ def verify_migration(old_conn, new_conn):
         logger.error(f"Error during migration verification: {e}")
         raise
 
+def migrate_job_agencies(old_conn, new_conn):
+    """Migrate job-agency relationships from old database to new database."""
+    logger.info("Starting job-agency relationships migration...")
+    try:
+        old_cursor = old_conn.cursor()
+        new_cursor = new_conn.cursor()
+        
+        # Get all job-agency relationships from old database
+        old_cursor.execute("""
+            SELECT DISTINCT ja.id as job_id, a.id as agency_id
+            FROM job_adverts ja
+            JOIN agency a ON ja.url_id = a.url_id
+            WHERE ja.id IS NOT NULL AND a.id IS NOT NULL
+        """)
+        relationships = old_cursor.fetchall()
+        
+        logger.info(f"Found {len(relationships)} job-agency relationships to migrate")
+        
+        # Insert relationships into new database
+        successful = 0
+        skipped = 0
+        errors = 0
+        
+        for rel in relationships:
+            try:
+                new_cursor.execute("""
+                    INSERT INTO job_agencies (job_id, agency_id)
+                    VALUES (?, ?)
+                """, (rel['job_id'], rel['agency_id']))
+                successful += 1
+            except sqlite3.IntegrityError as e:
+                if "UNIQUE constraint failed" in str(e):
+                    skipped += 1
+                    logger.debug(f"Skipped duplicate job-agency relationship: {rel}")
+                else:
+                    errors += 1
+                    logger.error(f"Error inserting job-agency relationship: {rel}")
+            except Exception as e:
+                errors += 1
+                logger.error(f"Unexpected error inserting job-agency relationship: {rel}")
+
+        new_conn.commit()
+        logger.info(f"Job-agency relationships migration completed:")
+        logger.info(f"- Successfully migrated: {successful}")
+        logger.info(f"- Skipped (duplicates): {skipped}")
+        logger.info(f"- Errors: {errors}")
+        
+        return successful, skipped, errors
+        
+    except Exception as e:
+        logger.error(f"Error during job-agency relationships migration: {e}")
+        raise
+
+def migrate_company_emails(old_conn, new_conn):
+    """Migrate company-email relationships from old database to new database."""
+    logger.info("Starting company-email relationships migration...")
+    try:
+        old_cursor = old_conn.cursor()
+        new_cursor = new_conn.cursor()
+        
+        # Get all company-email relationships from old database
+        old_cursor.execute("""
+            SELECT DISTINCT c.id as company_id, e.id as email_id
+            FROM company c
+            JOIN email e ON c.url_id = e.url_id
+            WHERE c.id IS NOT NULL AND e.id IS NOT NULL
+        """)
+        relationships = old_cursor.fetchall()
+        
+        logger.info(f"Found {len(relationships)} company-email relationships to migrate")
+        
+        # Insert relationships into new database
+        successful = 0
+        skipped = 0
+        errors = 0
+        
+        for rel in relationships:
+            try:
+                new_cursor.execute("""
+                    INSERT INTO company_emails (company_id, email_id)
+                    VALUES (?, ?)
+                """, (rel['company_id'], rel['email_id']))
+                successful += 1
+            except sqlite3.IntegrityError as e:
+                if "UNIQUE constraint failed" in str(e):
+                    skipped += 1
+                    logger.debug(f"Skipped duplicate company-email relationship: {rel}")
+                else:
+                    errors += 1
+                    logger.error(f"Error inserting company-email relationship: {rel}")
+            except Exception as e:
+                errors += 1
+                logger.error(f"Unexpected error inserting company-email relationship: {rel}")
+
+        new_conn.commit()
+        logger.info(f"Company-email relationships migration completed:")
+        logger.info(f"- Successfully migrated: {successful}")
+        logger.info(f"- Skipped (duplicates): {skipped}")
+        logger.info(f"- Errors: {errors}")
+        
+        return successful, skipped, errors
+        
+    except Exception as e:
+        logger.error(f"Error during company-email relationships migration: {e}")
+        raise
+
+def migrate_agency_emails(old_conn, new_conn):
+    """Migrate agency-email relationships from old database to new database."""
+    logger.info("Starting agency-email relationships migration...")
+    try:
+        old_cursor = old_conn.cursor()
+        new_cursor = new_conn.cursor()
+        
+        # Get all agency-email relationships from old database
+        old_cursor.execute("""
+            SELECT DISTINCT a.id as agency_id, e.id as email_id
+            FROM agency a
+            JOIN email e ON a.url_id = e.url_id
+            WHERE a.id IS NOT NULL AND e.id IS NOT NULL
+        """)
+        relationships = old_cursor.fetchall()
+        
+        logger.info(f"Found {len(relationships)} agency-email relationships to migrate")
+        
+        # Insert relationships into new database
+        successful = 0
+        skipped = 0
+        errors = 0
+        
+        for rel in relationships:
+            try:
+                new_cursor.execute("""
+                    INSERT INTO agency_emails (agency_id, email_id)
+                    VALUES (?, ?)
+                """, (rel['agency_id'], rel['email_id']))
+                successful += 1
+            except sqlite3.IntegrityError as e:
+                if "UNIQUE constraint failed" in str(e):
+                    skipped += 1
+                    logger.debug(f"Skipped duplicate agency-email relationship: {rel}")
+                else:
+                    errors += 1
+                    logger.error(f"Error inserting agency-email relationship: {rel}")
+            except Exception as e:
+                errors += 1
+                logger.error(f"Unexpected error inserting agency-email relationship: {rel}")
+
+        new_conn.commit()
+        logger.info(f"Agency-email relationships migration completed:")
+        logger.info(f"- Successfully migrated: {successful}")
+        logger.info(f"- Skipped (duplicates): {skipped}")
+        logger.info(f"- Errors: {errors}")
+        
+        return successful, skipped, errors
+        
+    except Exception as e:
+        logger.error(f"Error during agency-email relationships migration: {e}")
+        raise
+
 def main():
     """Main function to run the migration."""
     try:
@@ -1874,6 +2123,7 @@ def main():
                 create_phones_table(new_conn)
                 create_phone_relationship_tables(new_conn)
                 create_emails_table(new_conn)
+                create_benefits_table(new_conn)
                 
                 # Migrate data
                 migrate_agencies(old_conn, new_conn)
@@ -1894,15 +2144,27 @@ def main():
                 migrate_phones(old_conn, new_conn)
                 migrate_phone_relationships(old_conn, new_conn)
                 migrate_emails(old_conn, new_conn)
+                migrate_benefits(old_conn, new_conn)
+                migrate_job_agencies(old_conn, new_conn)
+                migrate_company_emails(old_conn, new_conn)
+                migrate_agency_emails(old_conn, new_conn)
                 
                 # Verify migration
+                verify_agencies_migration(old_conn, new_conn)
                 verify_migration(old_conn, new_conn)
+                verify_benefits_migration(old_conn, new_conn)
         
         logger.info("Migration process completed. Check migration.log for details.")
         
     except Exception as e:
         logger.error(f"Migration failed: {e}")
         raise
+    finally:
+        # Close the database connections
+        if 'old_conn' in locals():
+            old_conn.close()
+        if 'new_conn' in locals():
+            new_conn.close()
 
 if __name__ == "__main__":
     main() 
