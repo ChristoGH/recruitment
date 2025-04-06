@@ -370,3 +370,157 @@ CREATE TABLE url_processing_status (
 2. Update application code
 3. Test data integrity
 4. Deploy changes
+
+# Microservices Architecture
+
+## Overview
+
+The recruitment system has been refactored into a microservices architecture using FastAPI and RabbitMQ. This architecture replaces the previous CSV-based workflow with a more scalable, event-driven approach.
+
+## Components
+
+### 1. URL Discovery Service
+
+The URL Discovery Service (`url_discovery_service.py`) is responsible for:
+- Searching for recruitment URLs using Google with specific terms and date ranges
+- Validating URLs to ensure they are recruitment-related
+- Publishing valid URLs to a RabbitMQ queue for processing
+- Providing API endpoints for initiating searches and checking results
+
+### 2. URL Processing Service
+
+The URL Processing Service (`url_processing_service.py`) is responsible for:
+- Consuming URLs from the RabbitMQ queue
+- Crawling websites to extract content
+- Using LLMs to verify recruitment advertisements and extract structured data
+- Storing results in the Neo4j database
+- Providing API endpoints for processing individual URLs and checking status
+
+### 3. RabbitMQ
+
+RabbitMQ serves as the message broker between services:
+- The "recruitment_urls" queue holds URLs waiting to be processed
+- Messages are acknowledged only after successful processing
+- Failed messages are requeued for retry
+
+### 4. Neo4j Database
+
+The Neo4j database stores all processed data:
+- URLs and their metadata
+- Extracted recruitment information
+- Relationships between entities
+
+## Setup and Configuration
+
+### Environment Variables
+
+Create a `.env` file with the following variables:
+```
+# OpenAI API Key
+OPENAI_API_KEY=your_openai_api_key_here
+
+# Neo4j Configuration (for local Neo4j Desktop)
+NEO4J_URI=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PASSWORD=your_neo4j_password_here
+
+# RabbitMQ Configuration (optional, defaults shown)
+RABBITMQ_HOST=localhost
+RABBITMQ_PORT=5672
+RABBITMQ_USER=guest
+RABBITMQ_PASSWORD=guest
+```
+
+### Docker Compose
+
+The system is containerized using Docker Compose:
+```bash
+docker-compose up --build
+```
+
+This starts:
+- URL Discovery Service on port 8000
+- URL Processing Service on port 8001
+- RabbitMQ on ports 5672 (AMQP) and 15672 (management UI)
+
+## API Usage
+
+### URL Discovery Service
+
+#### Create a Search
+```bash
+curl -X POST "http://localhost:8000/search" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "id": "test_search",
+    "days_back": 7,
+    "recruitment_terms": [
+      "\"recruitment advert\"",
+      "\"job vacancy\"",
+      "\"hiring now\""
+    ]
+  }'
+```
+
+#### Check Search Status
+```bash
+curl "http://localhost:8000/search/status/test_search"
+```
+
+#### Get Found URLs
+```bash
+curl "http://localhost:8000/search/urls/test_search"
+```
+
+### URL Processing Service
+
+#### Process a Single URL
+```bash
+curl -X POST "http://localhost:8001/process" \
+  -H "Content-Type: application/json" \
+  -d '{
+    "url": "https://example.com/job-posting",
+    "process_all_prompts": true,
+    "use_transaction": true
+  }'
+```
+
+#### Check Processing Status
+```bash
+curl "http://localhost:8001/status/https://example.com/job-posting"
+```
+
+## Local Development
+
+For local development without Docker:
+
+1. Start RabbitMQ:
+   ```bash
+   docker run -d --name rabbitmq -p 5672:5672 -p 15672:15672 rabbitmq:3-management
+   ```
+
+2. Run the services directly:
+   ```bash
+   # Terminal 1
+   python url_discovery_service.py
+   
+   # Terminal 2
+   python url_processing_service.py
+   ```
+
+## Troubleshooting
+
+### Connection Issues with Neo4j
+
+If the URL Processing Service can't connect to your local Neo4j instance:
+1. Verify Neo4j Desktop is running and the database is started
+2. Check the connection details in your `.env` file
+3. Ensure the URL Processing Service has network access to your local machine
+4. Try using `host.docker.internal` instead of `localhost` in the NEO4J_URI if needed
+
+### RabbitMQ Issues
+
+If you encounter RabbitMQ connection issues:
+1. Check the RabbitMQ management UI at http://localhost:15672 (login with guest/guest)
+2. Verify the queue "recruitment_urls" exists
+3. Check the logs for connection errors
