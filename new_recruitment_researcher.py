@@ -1,20 +1,18 @@
 #!/usr/bin/env python3
 """
-Recruitment Researcher
+New Recruitment Researcher
 
-This script processes URLs to extract job recruitment data using LLMs and stores the results in a database.
-It uses web_crawler_lib for content extraction and supports transaction-based processing.
+This script processes URLs to extract job recruitment data using LLMs and stores the results in the new database schema.
+It uses web_crawler_lib for content extraction and supports transaction-based processing with the new normalized schema.
 """
 
 import argparse
 import json
 import logging
-import logging.handlers
 import os
 import random
 import time
 from pathlib import Path
-from typing import Any, Dict, List, Optional, Tuple, Union
 from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel
 
@@ -31,15 +29,14 @@ from utils import get_model_for_prompt
 from recruitment_models import transform_skills_response
 from get_urls_from_csvs import get_unique_urls_from_csvs
 from prompts import COMPLEX_PROMPTS, LIST_PROMPTS, NON_LIST_PROMPTS
-from recruitment_db_lib import DatabaseError, RecruitmentDatabase
+from new_recruitment_db import DatabaseError, NewRecruitmentDatabase
 from recruitment_models import (AgencyResponse, AttributesResponse, BenefitsResponse,
                                 CompanyResponse, ConfirmResponse, ContactPersonResponse,
                                 EmailResponse, JobAdvertResponse, JobResponse,
                                 LocationResponse, CompanyPhoneNumberResponse, LinkResponse,
                                 SkillExperienceResponse, DutiesResponse,
-                                QualificationsResponse, AdvertResponse)
+                                QualificationsResponse, AdvertResponse, SkillExperience)
 from response_processor_functions import PromptResponseProcessor, ResponseProcessingError
-from batch_processor import process_all_prompt_responses, direct_insert_skills
 from web_crawler_lib import crawl_website_sync, WebCrawlerResult
 
 # Load environment variables
@@ -48,7 +45,7 @@ load_dotenv()
 from logging_config import setup_logging
 
 # Create module-specific logger
-logger = setup_logging("recruitment_researcher")
+logger = setup_logging("new_recruitment_researcher")
 
 
 def setup_llm_engine(api_key: Optional[str] = None) -> Tuple[OpenAI, ChatMemoryBuffer]:
@@ -88,55 +85,6 @@ def clean_response_text(response_text: str) -> str:
         return response_text.split("```")[1].split("```")[0].strip()
     else:
         return response_text.strip()
-
-
-def process_url_skills(url_id: int, db, chat_engine) -> None:
-    """
-    Process skills specifically for a URL ID.
-    This can be used to backfill skills for URLs that were already processed.
-
-    Args:
-        url_id: The URL ID to process skills for
-        db: Database instance
-        chat_engine: Chat engine for processing
-    """
-    # Check if this URL already has skills
-    query = "SELECT COUNT(*) FROM skills WHERE url_id = ?"
-    with db._execute_query(query, (url_id,)) as cursor:
-        count = cursor.fetchone()[0]
-
-    if count > 0:
-        logger.info(f"URL ID {url_id} already has {count} skills. Skipping.")
-        return
-
-    # Get URL record
-    url_record = db.get_url_by_id(url_id)
-    if not url_record or not url_record.content:
-        logger.warning(f"No content found for URL ID {url_id}")
-        return
-
-    # Get skills using prompt
-    from prompts import COMPLEX_PROMPTS
-    prompt_key = "skills_prompt"
-    prompt_text = COMPLEX_PROMPTS[prompt_key]
-
-    # Process response
-    from recruitment_models import SkillExperienceResponse
-    skills_data = get_validated_response(prompt_key, prompt_text, SkillExperienceResponse, chat_engine)
-
-    if skills_data:
-        # Transform to expected format
-        from recruitment_models import transform_skills_response
-        processed_skills = transform_skills_response(skills_data)
-
-        # Direct insert skills
-        if processed_skills and processed_skills.get('skills'):
-            direct_insert_skills(db, url_id, processed_skills['skills'])
-            logger.info(f"Successfully processed skills for URL ID {url_id}")
-            return True
-
-    logger.warning(f"No skills could be extracted for URL ID {url_id}")
-    return False
 
 
 def get_validated_response(prompt_key: str, prompt_text: str, model_class: Any, chat_engine) -> Optional[Any]:
@@ -234,9 +182,6 @@ def get_validated_response(prompt_key: str, prompt_text: str, model_class: Any, 
 
     logger.error(f"Max retries reached for '{prompt_key}'. Skipping...")
     return None
-
-# Modification to batch_processor.py
-# Replace the process_skills function with this improved version:
 
 
 def verify_recruitment(url: str, chat_engine) -> Tuple[Dict[str, Any], List[str]]:
@@ -412,20 +357,17 @@ def validate_and_normalize_url(url: str) -> Tuple[bool, str, Optional[str]]:
         return False, url, f"URL validation error: {str(e)}"
 
 
-def process_url(url: str, db: RecruitmentDatabase, processor: PromptResponseProcessor,
-                llm: OpenAI, memory: ChatMemoryBuffer, process_all_prompts: bool = True,
-                use_transaction: bool = True) -> bool:
+def process_url(url: str, db: NewRecruitmentDatabase, llm: OpenAI, memory: ChatMemoryBuffer, 
+                process_all_prompts: bool = True) -> bool:
     """
-    Process a single URL to extract recruitment data using transaction support.
+    Process a single URL to extract recruitment data using the new database schema.
 
     Args:
         url: The URL to process
-        db: Database instance
-        processor: Response processor instance
+        db: New database instance
         llm: LLM instance
         memory: Chat memory buffer
         process_all_prompts: Whether to process all prompts or just basic ones
-        use_transaction: Whether to use transaction support
 
     Returns:
         True if processing succeeded, False otherwise
@@ -437,179 +379,302 @@ def process_url(url: str, db: RecruitmentDatabase, processor: PromptResponseProc
 
     if not is_valid:
         logger.warning(f"Invalid URL: {url}. {error_message}")
-        # Record the URL in the database as inaccessible
-        result = {
-            "url": url,
-            "domain_name": "",  # No valid domain
-            "source": "crawler",
-            "content": "",  # No content due to invalid URL
-            "recruitment_flag": -1,  # Use a default status indicating not processed
-            "accessible": 0,
-            "error_message": error_message
-        }
-        try:
-            db.insert_url(result)
-        except DatabaseError as e:
-            logger.error(f"Database error when inserting invalid URL {url}: {e}")
-
         return False
 
     # Use the normalized URL for crawling
     url = normalized_url
     logger.info(f"Normalized URL: {url}")
 
-    # Extract content using web_crawler_lib
-    try:
-        crawl_result = crawl_website_sync(
-            url=url,
-            excluded_tags=['form', 'header'],
-            verbose=True
-        )
-    except Exception as e:
-        logger.error(f"Crawler exception for URL {url}: {e}", exc_info=True)
-        # Record the URL in the database as inaccessible
-        result = {
-            "url": url,
-            "domain_name": tldextract.extract(url).domain,
-            "source": "crawler",
-            "content": "",  # No content because extraction failed
-            "recruitment_flag": -1,  # Use a default status indicating not processed
-            "accessible": 0,
-            "error_message": f"Crawler exception: {str(e)}"
-        }
-        try:
-            db.insert_url(result)
-        except DatabaseError as e:
-            logger.error(f"Database error when inserting URL with crawler exception {url}: {e}")
-
-        return False
-
-    if not crawl_result.success:
-        logger.warning(f"Failed to extract content from URL: {url}")
-        # Record the URL in the database as inaccessible
-        result = {
-            "url": url,
-            "domain_name": tldextract.extract(url).domain,
-            "source": "crawler",
-            "content": "",  # No content because extraction failed
-            "recruitment_flag": -1,  # Use a default status indicating not processed
-            "accessible": 0,
-            "error_message": crawl_result.error_message
-        }
-        try:
-            db.insert_url(result)
-            return False
-        except DatabaseError as e:
-            logger.error(f"Database error when inserting inaccessible URL {url}: {e}")
-            return False
-
     # Extract domain
     extracted = tldextract.extract(url)
     domain_name = extracted.domain
 
-    # Use the markdown content from the crawler
-    # text = crawl_result.markdown[:5000]
-    text = crawl_result.markdown[:min(5000, len(crawl_result.markdown))]
-    if not text:
-        logger.warning(f"Empty content extracted from URL: {url}")
-        result = {
-            "url": url,
-            "domain_name": domain_name,
-            "source": "crawler",
-            "content": "",
-            "recruitment_flag": -1,
-            "accessible": 1,  # URL was accessible but extraction yielded no content
-            "error_message": "Empty content extracted"
-        }
-        try:
-            db.insert_url(result)
-            return False
-        except DatabaseError as e:
-            logger.error(f"Database error when inserting URL with empty content {url}: {e}")
-            return False
-
+    # Check if URL already exists in the database
     try:
-        # Create document index and chat engine
-        documents = [liDocument(text=text)]
-        index = VectorStoreIndex.from_documents(documents)
-        memory.reset()
-        chat_engine = index.as_chat_engine(
-            chat_mode="context",
-            llm=llm,
-            memory=memory,
-            system_prompt=(
-                "You are a career recruitment analyst with deep insight into the skills and job market. "
-                "Your express goal is to investigate online adverts and extract pertinent factual detail."
-            )
-        )
-
-        # Verify if this is a recruitment advert
-        recruitment_type, evidence = verify_recruitment(url, chat_engine)
-        recruitment_flag = recruitment_type.get("recruitment_flag", -1)
-
-        # Build the record
-        result = {
-            "url": url,
-            "domain_name": domain_name,
-            "source": "crawler",
-            "content": text,
-            "recruitment_flag": recruitment_flag,
-            "accessible": 1
-        }
-
-        # Insert URL into database
+        # Insert URL into database with pending status
+        url_id = db.insert_url(url, domain_name, "crawler")
+        
+        # Update URL processing status to pending
+        db.update_url_processing_status(url_id, "pending")
+        
+        # Extract content using web_crawler_lib
         try:
-            db.insert_url(result)
-            url_id = db.get_url_id(url)
-
-            if url_id is None:
-                logger.error(f"Failed to retrieve URL ID for {url}")
-                return False
-
-            # Insert links if available
-            if crawl_result.links:
-                db.insert_url_links(url_id, crawl_result.links)
-        except DatabaseError as e:
-            logger.error(f"Database error when inserting URL {url}: {e}")
+            crawl_result = crawl_website_sync(
+                url=url,
+                excluded_tags=['form', 'header'],
+                verbose=True
+            )
+        except Exception as e:
+            logger.error(f"Crawler exception for URL {url}: {e}", exc_info=True)
+            # Update URL processing status to failed
+            db.update_url_processing_status(url_id, "failed", error_count=1)
             return False
 
-        # If not a recruitment advert and not processing all prompts, stop here
-        if recruitment_flag == 0 and not process_all_prompts:
-            logger.info(f"URL {url} is not a recruitment advert. Skipping detailed extraction.")
+        if not crawl_result.success:
+            logger.warning(f"Failed to extract content from URL: {url}")
+            # Update URL processing status to failed
+            db.update_url_processing_status(url_id, "failed", error_count=1)
+            return False
+
+        # Use the markdown content from the crawler
+        text = crawl_result.markdown[:min(5000, len(crawl_result.markdown))]
+        if not text:
+            logger.warning(f"Empty content extracted from URL: {url}")
+            # Update URL processing status to failed
+            db.update_url_processing_status(url_id, "failed", error_count=1)
+            return False
+
+        # Update URL processing status to processing
+        db.update_url_processing_status(url_id, "processing")
+
+        try:
+            # Create document index and chat engine
+            documents = [liDocument(text=text)]
+            index = VectorStoreIndex.from_documents(documents)
+            memory.reset()
+            chat_engine = index.as_chat_engine(
+                chat_mode="context",
+                llm=llm,
+                memory=memory,
+                system_prompt=(
+                    "You are a career recruitment analyst with deep insight into the skills and job market. "
+                    "Your express goal is to investigate online adverts and extract pertinent factual detail."
+                )
+            )
+
+            # Verify if this is a recruitment advert
+            recruitment_type, evidence = verify_recruitment(url, chat_engine)
+            recruitment_flag = recruitment_type.get("recruitment_flag", -1)
+
+            # If not a recruitment advert and not processing all prompts, stop here
+            if recruitment_flag == 0 and not process_all_prompts:
+                logger.info(f"URL {url} is not a recruitment advert. Skipping detailed extraction.")
+                # Update URL processing status to completed
+                db.update_url_processing_status(url_id, "completed")
+                return True
+
+            # Collect responses for all prompts
+            prompt_responses = collect_prompt_responses(chat_engine)
+
+            # Process the responses and store in the database
+            process_prompt_responses(db, url_id, prompt_responses)
+
+            # Update URL processing status to completed
+            db.update_url_processing_status(url_id, "completed")
+
+            logger.info(f"Successfully processed URL: {url}")
             return True
 
-        # Collect responses for all prompts
-        prompt_responses = collect_prompt_responses(chat_engine)
-
-        # Process all responses using batch processor
-        try:
-            results = process_all_prompt_responses(
-                db,
-                url_id,
-                prompt_responses,
-                use_transaction=use_transaction
-            )
-
-            if results["success"]:
-                logger.info(f"Successfully processed {results['processed']} responses for URL: {url}")
-            else:
-                logger.warning(f"Some errors occurred while processing URL: {url}")
-                for error in results["errors"]:
-                    logger.error(f"Error in {error['prompt_type']}: {error['error']}")
-
-                # Only mark as failed if all responses failed
-                if results["processed"] == 0 and results["failed"] > 0:
-                    return False
         except Exception as e:
-            logger.error(f"Error in batch processing for URL {url}: {e}", exc_info=True)
+            logger.error(f"Unexpected error processing URL {url}: {e}", exc_info=True)
+            # Update URL processing status to failed
+            db.update_url_processing_status(url_id, "failed", error_count=1)
             return False
 
-        logger.info(f"Successfully processed URL: {url}")
-        return True
-
-    except Exception as e:
-        logger.error(f"Unexpected error processing URL {url}: {e}", exc_info=True)
+    except DatabaseError as e:
+        logger.error(f"Database error when processing URL {url}: {e}")
         return False
+
+
+def process_prompt_responses(db: NewRecruitmentDatabase, url_id: int, prompt_responses: Dict[str, Any]) -> None:
+    """
+    Process prompt responses and store them in the database.
+
+    Args:
+        db: New database instance
+        url_id: The URL ID
+        prompt_responses: Dictionary of prompt responses
+    """
+    # Initialize data structures for batch processing
+    job_data = {}
+    company_data = {}
+    agency_data = {}
+    
+    # Process recruitment prompt
+    if "recruitment_prompt" in prompt_responses:
+        recruitment_data = prompt_responses["recruitment_prompt"]
+        # No need to store recruitment flag in the new schema, it's handled by the URL processing status
+    
+    # Process company prompt
+    if "company_prompt" in prompt_responses:
+        company_response = prompt_responses["company_prompt"]
+        if company_response and company_response.company:
+            company_data["name"] = company_response.company
+    
+    # Process agency prompt
+    if "agency_prompt" in prompt_responses:
+        agency_response = prompt_responses["agency_prompt"]
+        if agency_response and agency_response.agency:
+            agency_data["name"] = agency_response.agency
+    
+    # Process job prompt
+    if "job_prompt" in prompt_responses:
+        job_response = prompt_responses["job_prompt"]
+        if job_response:
+            job_data = job_response.model_dump()
+            # Only include non-None values
+            job_data = {k: v for k, v in job_data.items() if v is not None}
+            if job_data.get("title"):
+                job_data["status"] = job_data.get("status", "active")
+    
+    # Process skills prompt
+    if "skills_prompt" in prompt_responses:
+        skills_response = prompt_responses["skills_prompt"]
+        if skills_response and skills_response.skills:
+            job_data["skills"] = []
+            for skill_item in skills_response.skills:
+                if isinstance(skill_item, SkillExperience):
+                    job_data["skills"].append({
+                        "skill": skill_item.skill,
+                        "experience": skill_item.experience
+                    })
+                elif isinstance(skill_item, dict):
+                    job_data["skills"].append({
+                        "skill": skill_item.get("skill"),
+                        "experience": skill_item.get("experience")
+                    })
+    
+    # Process qualifications prompt
+    if "qualifications_prompt" in prompt_responses:
+        qualifications_response = prompt_responses["qualifications_prompt"]
+        if qualifications_response and qualifications_response.qualifications:
+            job_data["qualifications"] = qualifications_response.qualifications
+    
+    # Process attributes prompt
+    if "attributes_prompt" in prompt_responses:
+        attributes_response = prompt_responses["attributes_prompt"]
+        if attributes_response and attributes_response.attributes:
+            job_data["attributes"] = attributes_response.attributes
+    
+    # Process duties prompt
+    if "duties_prompt" in prompt_responses:
+        duties_response = prompt_responses["duties_prompt"]
+        if duties_response and duties_response.duties:
+            job_data["duties"] = duties_response.duties
+    
+    # Process location prompt
+    if "location_prompt" in prompt_responses:
+        location_response = prompt_responses["location_prompt"]
+        if location_response:
+            job_data["locations"] = [{
+                "country": location_response.country,
+                "province": location_response.province,
+                "city": location_response.city
+            }]
+    
+    # Process benefits prompt
+    if "benefits_prompt" in prompt_responses:
+        benefits_response = prompt_responses["benefits_prompt"]
+        if benefits_response and benefits_response.benefits:
+            job_data["benefits"] = benefits_response.benefits
+    
+    # Process company phone number prompt
+    if "company_phone_number_prompt" in prompt_responses:
+        phone_response = prompt_responses["company_phone_number_prompt"]
+        if phone_response and phone_response.number:
+            company_data["phones"] = [{
+                "number": phone_response.number,
+                "type": phone_response.type or "mobile"
+            }]
+    
+    # Process email prompt
+    if "email_prompt" in prompt_responses:
+        email_response = prompt_responses["email_prompt"]
+        if email_response and email_response.email:
+            # Store email in both company and agency data if available
+            email_data = {
+                "email": email_response.email,
+                "type": email_response.type or "primary"
+            }
+            
+            if company_data:
+                if "emails" not in company_data:
+                    company_data["emails"] = []
+                company_data["emails"].append(email_data)
+            
+            if agency_data:
+                if "emails" not in agency_data:
+                    agency_data["emails"] = []
+                agency_data["emails"].append(email_data)
+    
+    # Process all data in a single transaction
+    try:
+        # Process company data if available
+        company_id = None
+        if company_data and "name" in company_data:
+            company_id = db.insert_company(company_data["name"])
+            if company_id and job_data:
+                # Link job with company
+                db.link_job_company(job_data.get("id"), company_id)
+        
+        # Process agency data if available
+        agency_id = None
+        if agency_data and "name" in agency_data:
+            agency_id = db.insert_agency(agency_data["name"])
+            if agency_id and job_data:
+                # Link job with agency
+                db.link_job_agency(job_data.get("id"), agency_id)
+        
+        # Process job data if available
+        if job_data and "title" in job_data:
+            job_id = db.insert_job(
+                title=job_data["title"],
+                description=job_data.get("description"),
+                salary_min=job_data.get("salary_min"),
+                salary_max=job_data.get("salary_max"),
+                salary_currency=job_data.get("salary_currency"),
+                status=job_data.get("status", "active")
+            )
+            
+            # Link job with company and agency if available
+            if company_id:
+                db.link_job_company(job_id, company_id)
+            
+            if agency_id:
+                db.link_job_agency(job_id, agency_id)
+            
+            # Process skills if available
+            if "skills" in job_data:
+                for skill_data in job_data["skills"]:
+                    skill_name = skill_data.get("skill")
+                    experience = skill_data.get("experience")
+                    if skill_name:
+                        skill_id = db.insert_skill(skill_name)
+                        db.link_job_skill(job_id, skill_id, experience)
+            
+            # Process qualifications if available
+            if "qualifications" in job_data:
+                for qualification in job_data["qualifications"]:
+                    qualification_id = db.insert_qualification(qualification)
+                    db.link_job_qualification(job_id, qualification_id)
+            
+            # Process benefits if available
+            if "benefits" in job_data:
+                for benefit in job_data["benefits"]:
+                    if benefit:
+                        db.insert_benefit(benefit)
+            
+            # Process duties if available
+            if "duties" in job_data:
+                for duty in job_data["duties"]:
+                    duty_id = db.insert_duty(duty)
+                    db.link_job_duty(job_id, duty_id)
+            
+            # Process locations if available
+            if "locations" in job_data:
+                for location in job_data["locations"]:
+                    location_id = db.insert_location(
+                        country=location.get("country"),
+                        province=location.get("province"),
+                        city=location.get("city")
+                    )
+                    db.link_job_location(job_id, location_id)
+        
+        logger.info(f"Successfully processed all data for URL ID: {url_id}")
+    
+    except Exception as e:
+        logger.error(f"Error processing data for URL ID {url_id}: {e}")
+        raise
 
 
 def filter_valid_urls(urls: List[str]) -> List[str]:
@@ -639,68 +704,47 @@ def filter_valid_urls(urls: List[str]) -> List[str]:
     return valid_urls
 
 
-def backfill_skills(args, db, processor, llm, memory):
+def process_pending_urls(db: NewRecruitmentDatabase, llm: OpenAI, memory: ChatMemoryBuffer, 
+                        limit: int = 10, process_all_prompts: bool = True) -> None:
     """
-    Backfill skills for URLs that already exist in the database but are missing skills.
-    """
-    # Get all URLs with recruitment_flag = 1 (confirmed recruitment)
-    query = """
-        SELECT u.id, u.url FROM urls u
-        LEFT JOIN (
-            SELECT url_id, COUNT(*) as skill_count 
-            FROM skills 
-            GROUP BY url_id
-        ) s ON u.id = s.url_id
-        WHERE u.recruitment_flag = 1 
-        AND (s.skill_count IS NULL OR s.skill_count = 0)
-        ORDER BY u.id
-    """
+    Process URLs that are pending in the database.
 
-    with db._execute_query(query) as cursor:
-        urls_missing_skills = cursor.fetchall()
-
-    if not urls_missing_skills:
-        logger.info("No URLs missing skills found")
+    Args:
+        db: New database instance
+        llm: LLM instance
+        memory: Chat memory buffer
+        limit: Maximum number of URLs to process
+        process_all_prompts: Whether to process all prompts or just basic ones
+    """
+    # Get pending URLs
+    pending_urls = db.get_pending_urls(limit)
+    
+    if not pending_urls:
+        logger.info("No pending URLs found")
         return
-
-    logger.info(f"Found {len(urls_missing_skills)} URLs missing skills")
-
-    for url_id, url in urls_missing_skills:
-        logger.info(f"Processing skills for URL ID {url_id}: {url}")
+    
+    logger.info(f"Found {len(pending_urls)} pending URLs")
+    
+    for url_data in pending_urls:
+        url_id = url_data["id"]
+        url = url_data["url"]
+        
+        logger.info(f"Processing pending URL ID {url_id}: {url}")
+        
         try:
-            # Get content
-            url_record = db.get_url_by_id(url_id)
-            if not url_record or not url_record.content:
-                logger.warning(f"No content found for URL ID {url_id}")
-                continue
-
-            # Process skills
-            from web_crawler_lib import WebCrawlerResult
-            from llama_index.core import Document as liDocument
-            from llama_index.core import VectorStoreIndex
-
-            documents = [liDocument(text=url_record.content)]
-            index = VectorStoreIndex.from_documents(documents)
-            memory.reset()
-            chat_engine = index.as_chat_engine(
-                chat_mode="context",
-                llm=llm,
-                memory=memory,
-                system_prompt=(
-                    "You are a career recruitment analyst with deep insight into the skills and job market. "
-                    "Your express goal is to investigate online adverts and extract pertinent factual detail."
-                )
-            )
-
-            success = process_url_skills(url_id, db, chat_engine)
-
+            # Process the URL
+            success = process_url(url, db, llm, memory, process_all_prompts)
+            
             if success:
-                logger.info(f"Successfully backfilled skills for URL ID {url_id}")
+                logger.info(f"Successfully processed pending URL ID {url_id}")
             else:
-                logger.warning(f"Failed to backfill skills for URL ID {url_id}")
-
+                logger.warning(f"Failed to process pending URL ID {url_id}")
+        
         except Exception as e:
-            logger.error(f"Error backfilling skills for URL ID {url_id}: {e}")
+            logger.error(f"Error processing pending URL ID {url_id}: {e}")
+            # Update URL processing status to failed
+            db.update_url_processing_status(url_id, "failed", error_count=1)
+
 
 def main():
     """Main function to run the recruitment URL processing."""
@@ -721,31 +765,26 @@ def main():
                         help="Process all prompts even for non-recruitment URLs")
     parser.add_argument("--api-key", type=str, default=None,
                         help="API key for the LLM service (optional)")
-    parser.add_argument("--no-transaction", action="store_true",
-                        help="Disable transaction support (not recommended)")
     parser.add_argument("--skip-validation", action="store_true",
                         help="Skip URL validation (not recommended)")
-    parser.add_argument("--backfill-skills", action="store_true",
-                        help="Backfill skills for URLs that are missing them")
+    parser.add_argument("--process-pending", action="store_true",
+                        help="Process pending URLs from the database")
 
     args = parser.parse_args()
 
-    # Initialize database and processor
-    db = RecruitmentDatabase()
-    processor = PromptResponseProcessor(db)
-    # Run diagnostics to check for issues with skills table
-    # db.check_skills_table_schema()
-    # # Test direct skill insertion with a dummy URL ID (use an ID you know exists)
-    # known_url_id = 1  # Change this to an actual URL ID from your database
-    # db.test_skill_insertion(known_url_id)
+    # Initialize database
+    db = NewRecruitmentDatabase()
+    
     # Set up LLM and memory
     llm, memory = setup_llm_engine(args.api_key)
 
-    if args.backfill_skills:
-        print("Starting skills backfill process...")
-        backfill_skills(args, db, processor, llm, memory)
-        print("Skills backfill completed.")
+    # Process pending URLs if requested
+    if args.process_pending:
+        print("Processing pending URLs from the database...")
+        process_pending_urls(db, llm, memory, args.max_urls, args.process_all)
+        print("Pending URL processing completed.")
         return
+
     # Process a single URL if specified
     if args.single_url:
         # Validate the URL if validation is enabled
@@ -756,7 +795,7 @@ def main():
                 return
             args.single_url = normalized_url
 
-        success = process_url(args.single_url, db, processor, llm, memory, args.process_all)
+        success = process_url(args.single_url, db, llm, memory, args.process_all)
         if success:
             print(f"Successfully processed URL: {args.single_url}")
         else:
@@ -781,12 +820,15 @@ def main():
 
     # Filter out URLs already in the database
     try:
-        urls_in_db = pd.DataFrame(db.search_urls(limit=1000000))
-        if urls_in_db.empty:
+        # Get all URLs from the database
+        query = "SELECT url FROM urls"
+        with db._execute_query(query) as cursor:
+            urls_from_db = [row[0] for row in cursor.fetchall()]
+        
+        if not urls_from_db:
             urls = urls_from_files
             print("No existing URLs found in database")
         else:
-            urls_from_db = urls_in_db['url'].tolist()
             print(f"Found {len(urls_from_db)} URLs already in database")
             urls = list(set(urls_from_files) - set(urls_from_db))
             print(f"After removing existing URLs: {len(urls)} URLs to process")
@@ -818,7 +860,7 @@ def main():
     for i, url in enumerate(urls_to_process):
         print(f"Processing URL {i + 1}/{len(urls_to_process)}: {url}")
         try:
-            success = process_url(url, db, processor, llm, memory, args.process_all)
+            success = process_url(url, db, llm, memory, args.process_all)
             if success:
                 logger.info(f"Successfully processed URL: {url}")
                 print(f"✓ Success: {url}")
@@ -840,4 +882,4 @@ def main():
 
 
 if __name__ == "__main__":
-    main()
+    main() 

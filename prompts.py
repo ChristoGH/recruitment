@@ -122,9 +122,9 @@ COMPLEX_PROMPTS = {
         '  "application_deadline": "YYYY-MM-DD" or null\n'
         "}"
     ),
-        "skills_prompt": (
+    "skills_prompt": (
         "Assistant, please extract the skills with associated experience required of candidates"
-        " of the advertised job(s) from this text, if any. "
+        " of the advertised job(s) from this article, if any. "
         "Skills are job related abilities that are required to perform the advertised job(s) as explicitly stated in the advert. "
         " These are not 'soft skills' or personal strengths such as problem-solving abilities, qualities, traits  or characteristics. "
         " Experience is associated with a particular skill and is the number of years of experience required to perform the job. "

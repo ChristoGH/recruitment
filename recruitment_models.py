@@ -30,6 +30,11 @@ class ConfirmResponse(BaseModel):
 
 class JobResponse(BaseModel):
     title: Optional[str] = Field(None, min_length=2, max_length=200)
+    description: Optional[str] = None
+    salary_min: Optional[float] = None
+    salary_max: Optional[float] = None
+    salary_currency: Optional[str] = None
+    status: Optional[str] = None
 
 
 class LocationResponse(BaseModel):
@@ -202,6 +207,7 @@ class LinkResponse(BaseModel):
 
 class EmailResponse(BaseModel):
     email: Optional[EmailStr] = None  # Using EmailStr for email validation
+    type: Optional[str] = "primary"  # Default to primary if not specified
 
 
 class CompanyPhoneNumberResponse(BaseModel):

@@ -1,0 +1,323 @@
+#!/usr/bin/env python3
+"""
+URL Discovery Service
+
+This FastAPI service searches for recruitment URLs and publishes them to a RabbitMQ queue.
+It's based on the recruitment_ad_search.py script.
+"""
+
+import os
+import json
+import logging
+import time
+from datetime import datetime, timedelta
+from typing import List, Dict, Any, Optional
+from urllib.parse import urlparse
+import tldextract
+from googlesearch import search
+from functools import lru_cache
+from pydantic import BaseModel
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends
+from fastapi.middleware.cors import CORSMiddleware
+import pika
+import asyncio
+from dotenv import load_dotenv
+
+from logging_config import setup_logging
+from libraries.config_validator import ConfigValidator
+
+# Load environment variables
+load_dotenv()
+
+# Create module-specific logger
+logger = setup_logging("url_discovery_service")
+
+# Initialize FastAPI app
+app = FastAPI(
+    title="URL Discovery Service",
+    description="Service for discovering recruitment URLs and publishing them to a queue",
+    version="1.0.0"
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# Pydantic models for API
+class SearchConfig(BaseModel):
+    id: str
+    days_back: int = 7
+    excluded_domains: List[str] = []
+    academic_suffixes: List[str] = []
+    recruitment_terms: List[str] = [
+        '"recruitment advert"',
+        '"job vacancy"',
+        '"hiring now"',
+        '"employment opportunity"',
+        '"career opportunity"',
+        '"job advertisement"',
+        '"recruitment drive"'
+    ]
+
+class SearchResponse(BaseModel):
+    search_id: str
+    urls_found: int
+    urls: List[str]
+    timestamp: str
+
+class SearchStatus(BaseModel):
+    search_id: str
+    status: str
+    urls_found: int
+    timestamp: str
+
+# RabbitMQ connection
+def get_rabbitmq_connection():
+    """Get a connection to RabbitMQ."""
+    try:
+        # Get RabbitMQ connection parameters from environment variables
+        rabbitmq_host = os.getenv("RABBITMQ_HOST", "localhost")
+        rabbitmq_port = int(os.getenv("RABBITMQ_PORT", "5672"))
+        rabbitmq_user = os.getenv("RABBITMQ_USER", "guest")
+        rabbitmq_password = os.getenv("RABBITMQ_PASSWORD", "guest")
+        
+        # Create connection parameters
+        credentials = pika.PlainCredentials(rabbitmq_user, rabbitmq_password)
+        parameters = pika.ConnectionParameters(
+            host=rabbitmq_host,
+            port=rabbitmq_port,
+            credentials=credentials,
+            heartbeat=600,
+            blocked_connection_timeout=300
+        )
+        
+        # Create connection
+        connection = pika.BlockingConnection(parameters)
+        return connection
+    except Exception as e:
+        logger.error(f"Failed to connect to RabbitMQ: {e}")
+        raise HTTPException(status_code=500, detail=f"Failed to connect to RabbitMQ: {str(e)}")
+
+# URL validation
+def is_valid_url(url: str) -> bool:
+    """Validate URL format and structure."""
+    try:
+        result = urlparse(url)
+        return all([result.scheme, result.netloc])
+    except Exception:
+        return False
+
+# RecruitmentAdSearch class adapted for the service
+class RecruitmentAdSearch:
+    """Encapsulates search logic for recruitment advertisements."""
+
+    def __init__(self, search_config: SearchConfig) -> None:
+        """Initialize the search handler."""
+        self.search_name = search_config.id
+        self.days_back = search_config.days_back
+        self.excluded_domains = search_config.excluded_domains
+        self.academic_suffixes = search_config.academic_suffixes
+        self.recruitment_terms = search_config.recruitment_terms
+
+    def is_valid_recruitment_site(self, url: str) -> bool:
+        """Filter out non-relevant domains if necessary."""
+        try:
+            if not is_valid_url(url):
+                logger.debug(f"Invalid URL format: {url}")
+                return False
+
+            parsed = urlparse(url)
+            domain = parsed.netloc.lower()
+
+            if any(excluded in domain for excluded in self.excluded_domains):
+                logger.debug(f"Excluded domain: {url}")
+                return False
+
+            if any(domain.endswith(suffix) for suffix in self.academic_suffixes):
+                logger.debug(f"Academic domain excluded: {url}")
+                return False
+
+            return True
+
+        except Exception as e:
+            logger.error(f"Error checking domain validity for {url}: {e}")
+            return False
+
+    def construct_query(self, start_date: str, end_date: str) -> str:
+        """Construct a targeted search query for recruitment adverts."""
+        recruitment_part = f"({' OR '.join(self.recruitment_terms)})"
+        base_query = f'{recruitment_part} AND "South Africa"'
+        final_query = f"{base_query} after:{start_date} before:{end_date}"
+        logger.debug(f"Constructed query: {final_query}")
+        return final_query
+
+    @lru_cache(maxsize=100)
+    def fetch_ads_with_retry(self, query: str, max_results: int = 200, max_retries: int = 3) -> List[str]:
+        """Fetch articles with retry logic for transient failures."""
+        articles = []
+        retry_count = 0
+        
+        while retry_count < max_retries:
+            try:
+                # Try with tld parameter
+                try:
+                    results = search(query, tld="com", lang="en", num=10, start=0, stop=max_results, pause=2)
+                except TypeError:
+                    # Fall back to version without tld parameter
+                    results = search(query, lang="en", num_results=100, sleep_interval=5)
+
+                # Validate and filter results
+                for url in results:
+                    if self.is_valid_recruitment_site(url):
+                        articles.append(url)
+                        logger.debug(f"Found valid URL: {url}")
+                
+                # Log results per search term
+                for term in self.recruitment_terms:
+                    term_results = [url for url in articles if term.lower() in url.lower()]
+                    logger.info(f"Found {len(term_results)} results for term: {term}")
+                
+                return articles
+                
+            except Exception as e:
+                retry_count += 1
+                logger.warning(f"Attempt {retry_count} failed: {str(e)}")
+                if retry_count < max_retries:
+                    time.sleep(2 ** retry_count)  # Exponential backoff
+                else:
+                    logger.error(f"Failed to fetch articles after {max_retries} attempts: {str(e)}")
+                    return []
+
+    def get_date_range(self) -> tuple[str, str]:
+        """Get the date range for the search."""
+        end_date = datetime.now()
+        start_date = end_date - timedelta(days=self.days_back)
+        return (
+            start_date.strftime("%Y-%m-%d"),
+            end_date.strftime("%Y-%m-%d")
+        )
+
+    def get_recent_ads(self) -> List[str]:
+        """Retrieve recent recruitment advertisements based on days_back in the configuration."""
+        start_date, end_date = self.get_date_range()
+        query = self.construct_query(start_date=start_date, end_date=end_date)
+        logger.info(f"Searching for recruitment ads with query: {query}")
+        
+        ads = self.fetch_ads_with_retry(query)
+        logger.info(f"Retrieved {len(ads)} recruitment ads in the past {self.days_back} day(s).")
+        
+        return ads
+
+# Store search results in memory (in a real app, use Redis or a database)
+search_results = {}
+
+# Background task to publish URLs to RabbitMQ
+async def publish_urls_to_queue(urls: List[str], search_id: str):
+    """Publish URLs to RabbitMQ queue."""
+    try:
+        # Get RabbitMQ connection
+        connection = get_rabbitmq_connection()
+        channel = connection.channel()
+        
+        # Declare queue
+        queue_name = "recruitment_urls"
+        channel.queue_declare(queue=queue_name, durable=True)
+        
+        # Publish each URL to the queue
+        for url in urls:
+            message = {
+                "url": url,
+                "search_id": search_id,
+                "timestamp": datetime.now().isoformat()
+            }
+            channel.basic_publish(
+                exchange="",
+                routing_key=queue_name,
+                body=json.dumps(message),
+                properties=pika.BasicProperties(
+                    delivery_mode=2,  # make message persistent
+                )
+            )
+            logger.info(f"Published URL to queue: {url}")
+        
+        # Close connection
+        connection.close()
+        
+        # Update search status
+        search_results[search_id]["status"] = "completed"
+        search_results[search_id]["urls_found"] = len(urls)
+        
+    except Exception as e:
+        logger.error(f"Error publishing URLs to queue: {e}")
+        search_results[search_id]["status"] = "failed"
+        search_results[search_id]["error"] = str(e)
+
+# API endpoints
+@app.post("/search", response_model=SearchResponse)
+async def create_search(search_config: SearchConfig, background_tasks: BackgroundTasks):
+    """Create a new search for recruitment URLs."""
+    try:
+        # Create search ID
+        search_id = f"{search_config.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
+        
+        # Initialize search status
+        search_results[search_id] = {
+            "status": "pending",
+            "urls_found": 0,
+            "urls": [],
+            "timestamp": datetime.now().isoformat()
+        }
+        
+        # Create search instance
+        searcher = RecruitmentAdSearch(search_config)
+        
+        # Get URLs
+        urls = searcher.get_recent_ads()
+        
+        # Update search results
+        search_results[search_id]["urls"] = urls
+        search_results[search_id]["urls_found"] = len(urls)
+        
+        # Add background task to publish URLs to queue
+        background_tasks.add_task(publish_urls_to_queue, urls, search_id)
+        
+        return SearchResponse(
+            search_id=search_id,
+            urls_found=len(urls),
+            urls=urls,
+            timestamp=datetime.now().isoformat()
+        )
+        
+    except Exception as e:
+        logger.error(f"Error creating search: {e}")
+        raise HTTPException(status_code=500, detail=str(e))
+
+@app.get("/search/{search_id}", response_model=SearchStatus)
+async def get_search_status(search_id: str):
+    """Get the status of a search."""
+    if search_id not in search_results:
+        raise HTTPException(status_code=404, detail=f"Search ID {search_id} not found")
+    
+    return SearchStatus(
+        search_id=search_id,
+        status=search_results[search_id]["status"],
+        urls_found=search_results[search_id]["urls_found"],
+        timestamp=search_results[search_id]["timestamp"]
+    )
+
+@app.get("/search/{search_id}/urls", response_model=List[str])
+async def get_search_urls(search_id: str):
+    """Get the URLs found by a search."""
+    if search_id not in search_results:
+        raise HTTPException(status_code=404, detail=f"Search ID {search_id} not found")
+    
+    return search_results[search_id]["urls"]
+
+if __name__ == "__main__":
+    import uvicorn
+    uvicorn.run(app, host="0.0.0.0", port=8000) 
