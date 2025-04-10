@@ -11,6 +11,7 @@ import json
 import logging
 import time
 import random
+from datetime import datetime
 from typing import Any, Dict, List, Optional, Tuple, Union
 from pydantic import BaseModel
 from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends
@@ -23,6 +24,7 @@ from llama_index.core import Document as liDocument
 from llama_index.core import VectorStoreIndex
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.llms.openai import OpenAI
+from contextlib import asynccontextmanager
 
 # Local imports
 from recruitment_models import transform_skills_response
@@ -36,7 +38,7 @@ from recruitment_models import (AgencyResponse, AttributesResponse, BenefitsResp
                                 QualificationsResponse, AdvertResponse)
 from response_processor_functions import PromptResponseProcessor, ResponseProcessingError
 from batch_processor import process_all_prompt_responses, direct_insert_skills
-from web_crawler_lib import crawl_website_sync, WebCrawlerResult
+from web_crawler_lib import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
 from logging_config import setup_logging
 
 # Load environment variables
@@ -45,11 +47,54 @@ load_dotenv()
 # Create module-specific logger
 logger = setup_logging("url_processing_service")
 
-# Initialize FastAPI app
+# Map prompt keys to their corresponding model classes
+def get_model_for_prompt(prompt_key: str) -> Optional[Any]:
+    """Get the model class for a given prompt key."""
+    model_map = {
+        # LIST_PROMPTS
+        "recruitment_prompt": AdvertResponse,
+        "skills_prompt": SkillExperienceResponse,
+        "duties_prompt": DutiesResponse,
+        "qualifications_prompt": QualificationsResponse,
+        "benefits_prompt": BenefitsResponse,
+        "attributes_prompt": AttributesResponse,
+        
+        # NON_LIST_PROMPTS
+        "company_prompt": CompanyResponse,
+        "job_prompt": JobResponse,
+        "job_advert_prompt": JobAdvertResponse,
+        "agency_prompt": AgencyResponse,
+        "location_prompt": LocationResponse,
+        "contact_person_prompt": ContactPersonResponse,
+        "email_prompt": EmailResponse,
+        "phone_prompt": CompanyPhoneNumberResponse,
+        "link_prompt": LinkResponse,
+        "confirm_prompt": ConfirmResponse,
+    }
+    
+    return model_map.get(prompt_key)
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for FastAPI application."""
+    # Startup: Start background tasks
+    background_task = asyncio.create_task(process_urls_from_queue())
+    
+    yield  # This is where the application runs
+    
+    # Shutdown: Cancel background tasks
+    background_task.cancel()
+    try:
+        await background_task
+    except asyncio.CancelledError:
+        pass
+
+# Initialize FastAPI app with lifespan
 app = FastAPI(
     title="URL Processing Service",
     description="Service for processing recruitment URLs and storing results in a database",
-    version="1.0.0"
+    version="1.0.0",
+    lifespan=lifespan
 )
 
 # Add CORS middleware
@@ -571,8 +616,15 @@ async def process_urls_from_queue():
         
         logger.info("Started consuming from RabbitMQ queue")
         
-        # Start consuming in a loop
-        channel.start_consuming()
+        # Instead of blocking with channel.start_consuming(), use a non-blocking approach
+        while True:
+            try:
+                # Process a single message and then yield control
+                connection.process_data_events()
+                await asyncio.sleep(0.1)  # Small delay to prevent CPU hogging
+            except Exception as e:
+                logger.error(f"Error in RabbitMQ consumer loop: {e}")
+                await asyncio.sleep(5)  # Wait before retrying
         
     except Exception as e:
         logger.error(f"Error consuming from RabbitMQ queue: {e}")
@@ -625,12 +677,6 @@ async def get_url_status(url: str):
         error_message=processing_results[url]["error_message"],
         timestamp=processing_results[url]["timestamp"]
     )
-
-@app.on_event("startup")
-async def startup_event():
-    """Start background tasks on startup."""
-    # Start RabbitMQ consumer in the background
-    asyncio.create_task(process_urls_from_queue())
 
 if __name__ == "__main__":
     import uvicorn

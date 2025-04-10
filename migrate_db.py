@@ -3,6 +3,7 @@ import logging
 from datetime import datetime
 import os
 import shutil
+from pathlib import Path
 
 # Set up logging
 logging.basicConfig(
@@ -60,18 +61,40 @@ def create_urls_table(new_conn):
     logger.info("Creating urls table...")
     try:
         new_cursor = new_conn.cursor()
+        
+        # Drop existing table if it exists
+        new_cursor.execute("DROP TABLE IF EXISTS urls")
+        new_conn.commit()
+        
+        # Create new table
         new_cursor.execute("""
-            CREATE TABLE IF NOT EXISTS urls (
+            CREATE TABLE urls (
                 id INTEGER PRIMARY KEY,
                 url TEXT UNIQUE NOT NULL,
                 domain_name TEXT,
                 source TEXT,
+                extracted_date TIMESTAMP,
+                content TEXT,
+                recruitment_flag INTEGER DEFAULT 0,
+                accessible INTEGER DEFAULT 1,
+                author TEXT,
+                published_date TEXT,
+                title TEXT,
+                error_message TEXT,
                 created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
                 updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
             )
         """)
         new_conn.commit()
         logger.info("Created urls table")
+        
+        # Create indexes after table exists
+        logger.info("Creating indexes...")
+        new_cursor.execute("CREATE INDEX IF NOT EXISTS idx_urls_domain ON urls(domain_name)")
+        new_cursor.execute("CREATE INDEX IF NOT EXISTS idx_urls_extracted_date ON urls(extracted_date)")
+        new_conn.commit()
+        logger.info("Created indexes")
+        
     except sqlite3.Error as e:
         logger.error(f"Error creating urls table: {e}")
         raise
@@ -2087,6 +2110,56 @@ def migrate_agency_emails(old_conn, new_conn):
     except Exception as e:
         logger.error(f"Error during agency-email relationships migration: {e}")
         raise
+
+def migrate_urls_table(db_path: str):
+    """Migrate the urls table to the new schema."""
+    logger.info("Starting URLs table migration...")
+    
+    try:
+        conn = sqlite3.connect(db_path)
+        cursor = conn.cursor()
+        
+        # Create a temporary table with the new schema
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS urls_new (
+                id INTEGER PRIMARY KEY,
+                url TEXT UNIQUE,
+                extracted_date TEXT,
+                content TEXT,
+                domain_name TEXT,
+                source TEXT,
+                recruitment_flag INTEGER DEFAULT -1,
+                accessible INTEGER DEFAULT 1,
+                author TEXT,
+                published_date TEXT,
+                title TEXT,
+                error_message TEXT
+            )
+        """)
+        
+        # Copy data from the old table to the new one
+        cursor.execute("""
+            INSERT INTO urls_new (id, url, domain_name, source, extracted_date)
+            SELECT id, url, domain_name, source, created_at
+            FROM urls
+        """)
+        
+        # Drop the old table
+        cursor.execute("DROP TABLE urls")
+        
+        # Rename the new table to the original name
+        cursor.execute("ALTER TABLE urls_new RENAME TO urls")
+        
+        # Commit the changes
+        conn.commit()
+        logger.info("Successfully migrated URLs table")
+        
+    except Exception as e:
+        logger.error(f"Error during migration: {e}")
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 def main():
     """Main function to run the migration."""
