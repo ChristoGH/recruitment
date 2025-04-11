@@ -91,3 +91,4 @@ codeship_deploy_key.pub
 codeship.env
 application/casedispatcher/log/
 .env
+*.db
