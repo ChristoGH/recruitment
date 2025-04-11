@@ -6,6 +6,7 @@ WORKDIR /app
 RUN apt-get update && apt-get install -y \
     build-essential \
     curl \
+    cron \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
@@ -15,8 +16,11 @@ RUN pip install --no-cache-dir -r requirements.txt
 # Copy application code
 COPY . .
 
+# Create logs directory
+RUN mkdir -p /app/logs
+
 # Expose port
 EXPOSE 8000
 
-# Run the application
+# Command is now in docker-compose.yml
 CMD ["uvicorn", "url_discovery_service:app", "--host", "0.0.0.0", "--port", "8000"] 

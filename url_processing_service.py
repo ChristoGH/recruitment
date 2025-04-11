@@ -63,11 +63,14 @@ def get_model_for_prompt(prompt_key: str) -> Optional[Any]:
         "company_prompt": CompanyResponse,
         "job_prompt": JobResponse,
         "job_advert_prompt": JobAdvertResponse,
+        "jobadvert_prompt": JobAdvertResponse,
         "agency_prompt": AgencyResponse,
         "location_prompt": LocationResponse,
         "contact_person_prompt": ContactPersonResponse,
+        "contacts_prompt": ContactPersonResponse,
         "email_prompt": EmailResponse,
         "phone_prompt": CompanyPhoneNumberResponse,
+        "company_phone_number_prompt": CompanyPhoneNumberResponse,
         "link_prompt": LinkResponse,
         "confirm_prompt": ConfirmResponse,
     }
@@ -268,6 +271,11 @@ def verify_recruitment(url: str, chat_engine) -> Tuple[Dict[str, Any], List[str]
 # Clean response text
 def clean_response_text(response_text: str) -> str:
     """Clean LLM response text by removing markdown code blocks and other formatting."""
+    # Handle empty responses
+    if not response_text or response_text.strip() == "Empty Response":
+        # Return appropriate empty JSON structure based on common response formats
+        return "{}"
+    
     # Try to clean up the response if it contains markdown code blocks
     if "```json" in response_text:
         return response_text.split("```json")[1].split("```")[0].strip()
@@ -339,6 +347,12 @@ def get_validated_response(prompt_key: str, prompt_text: str, model_class: Any, 
                         except json.JSONDecodeError:
                             logger.warning(f"Failed to parse modified JSON for skills prompt, attempt {attempt + 1}")
 
+                    # If response is empty or has a null skills value, return an empty skills response
+                    if not response_text or response_text == "{}" or '"skills": null' in response_text:
+                        default_response = {"skills": []}
+                        logger.info(f"Returning default empty skills response for '{prompt_key}'")
+                        return model_class.model_validate(default_response)
+
                     # If we reach here, more manual parsing may be needed
                     logger.info(f"Attempting manual parsing for skills response")
 
@@ -352,7 +366,34 @@ def get_validated_response(prompt_key: str, prompt_text: str, model_class: Any, 
                 return response_data
             except Exception as e:
                 logger.error(f"Validation error for '{prompt_key}': {e}")
-                # Continue to next attempt
+                
+                # Provide appropriate default responses based on prompt type
+                if response_text == "{}":
+                    if prompt_key == "attributes_prompt":
+                        return model_class.model_validate({"attributes": []})
+                    elif prompt_key == "duties_prompt":
+                        return model_class.model_validate({"duties": []})
+                    elif prompt_key == "qualifications_prompt":
+                        return model_class.model_validate({"qualifications": []})
+                    elif prompt_key == "benefits_prompt":
+                        return model_class.model_validate({"benefits": []})
+                    elif prompt_key == "location_prompt":
+                        return model_class.model_validate({"country": None, "province": None, "city": None, "street_address": None})
+                    elif prompt_key == "jobadvert_prompt" or prompt_key == "job_advert_prompt":
+                        return model_class.model_validate({
+                            "description": None, 
+                            "salary": None, 
+                            "duration": None, 
+                            "start_date": None, 
+                            "end_date": None, 
+                            "posted_date": None, 
+                            "application_deadline": None
+                        })
+                    elif prompt_key == "recruitment_prompt":
+                        # Default to "no" when the model returns an empty response
+                        logger.info(f"Empty response for recruitment_prompt, defaulting to 'no'")
+                        return model_class.model_validate({"answer": "no", "evidence": None})
+                # Continue to next attempt if we can't create a default response
 
         except json.JSONDecodeError as e:
             logger.error(f"JSON decoding failed for '{prompt_key}' (attempt {attempt + 1}/{max_retries}): {e}")
@@ -369,6 +410,31 @@ def get_validated_response(prompt_key: str, prompt_text: str, model_class: Any, 
                 # Continue to next attempt
 
     logger.error(f"Max retries reached for '{prompt_key}'. Skipping...")
+    
+    # When all retries fail, return appropriate empty responses
+    if prompt_key == "attributes_prompt":
+        return model_class.model_validate({"attributes": []})
+    elif prompt_key == "duties_prompt":
+        return model_class.model_validate({"duties": []})
+    elif prompt_key == "qualifications_prompt":
+        return model_class.model_validate({"qualifications": []})
+    elif prompt_key == "benefits_prompt":
+        return model_class.model_validate({"benefits": []})
+    elif prompt_key == "skills_prompt":
+        return model_class.model_validate({"skills": []})
+    elif prompt_key == "location_prompt":
+        return model_class.model_validate({"country": None, "province": None, "city": None, "street_address": None})
+    elif prompt_key == "jobadvert_prompt" or prompt_key == "job_advert_prompt":
+        return model_class.model_validate({
+            "description": None, 
+            "salary": None, 
+            "duration": None, 
+            "start_date": None, 
+            "end_date": None, 
+            "posted_date": None, 
+            "application_deadline": None
+        })
+    
     return None
 
 # Collect prompt responses
@@ -680,4 +746,4 @@ async def get_url_status(url: str):
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8001) 
+    uvicorn.run(app, host="0.0.0.0", port=8002) 

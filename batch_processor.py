@@ -77,18 +77,95 @@ def process_all_prompt_responses(db, url_id: int, prompt_responses: Dict[str, An
             })
     else:
         # Process responses individually using the standard methods
-        for prompt_type, response in prompt_responses.items():
+        
+        # Process in a specific order to maintain proper relationships
+        # 1. First process recruitment_prompt
+        if "recruitment_prompt" in prompt_responses:
             try:
-                # Handle different response types
-                if prompt_type == "recruitment_prompt":
-                    process_recruitment(db, url_id, response)
-                elif prompt_type == "company_prompt":
-                    process_company(db, url_id, response)
-                elif prompt_type == "agency_prompt":
-                    process_agency(db, url_id, response)
-                elif prompt_type == "job_prompt":
-                    process_job(db, url_id, response)
-                elif prompt_type == "company_phone_number_prompt":
+                process_recruitment(db, url_id, prompt_responses["recruitment_prompt"])
+                results["processed"] += 1
+            except Exception as e:
+                logger.error(f"Failed to process recruitment_prompt: {e}")
+                results["failed"] += 1
+                results["errors"].append({
+                    "prompt_type": "recruitment_prompt",
+                    "error": str(e)
+                })
+        
+        # 2. First process company_prompt and agency_prompt to establish company_id and recruiter_id
+        company_id = None
+        recruiter_id = None
+        
+        # Process company first
+        if "company_prompt" in prompt_responses:
+            try:
+                company_id, company_name = process_company(db, url_id, prompt_responses["company_prompt"])
+                results["processed"] += 1
+                logger.info(f"Processed company with ID {company_id} for URL ID {url_id}")
+            except Exception as e:
+                logger.error(f"Failed to process company_prompt: {e}")
+                results["failed"] += 1
+                results["errors"].append({
+                    "prompt_type": "company_prompt",
+                    "error": str(e)
+                })
+        
+        # Then process agency
+        if "agency_prompt" in prompt_responses:
+            try:
+                recruiter_id = process_agency(db, url_id, prompt_responses["agency_prompt"])
+                results["processed"] += 1
+                logger.info(f"Processed agency with recruiter ID {recruiter_id} for URL ID {url_id}")
+            except Exception as e:
+                logger.error(f"Failed to process agency_prompt: {e}")
+                results["failed"] += 1
+                results["errors"].append({
+                    "prompt_type": "agency_prompt",
+                    "error": str(e)
+                })
+        
+        # 3. Then process job_prompt with the company_id and recruiter_id
+        if "job_prompt" in prompt_responses:
+            try:
+                # Process the job with company and recruiter info
+                job_data = _ensure_dict(prompt_responses["job_prompt"])
+                title = job_data.get("title")
+                
+                if title:
+                    # Use the company_name we found earlier
+                    process_job(db, url_id, prompt_responses["job_prompt"], company_name)
+                    logger.info(f"Processed job advert '{title}' with company name '{company_name}'")
+                    
+                results["processed"] += 1
+            except Exception as e:
+                logger.error(f"Failed to process job_prompt: {e}")
+                results["failed"] += 1
+                results["errors"].append({
+                    "prompt_type": "job_prompt",
+                    "error": str(e)
+                })
+        
+        # 4. Process jobadvert_prompt after job_prompt
+        if "jobadvert_prompt" in prompt_responses:
+            try:
+                process_job_advert(db, url_id, prompt_responses["jobadvert_prompt"])
+                results["processed"] += 1
+            except Exception as e:
+                logger.error(f"Failed to process jobadvert_prompt: {e}")
+                results["failed"] += 1
+                results["errors"].append({
+                    "prompt_type": "jobadvert_prompt",
+                    "error": str(e)
+                })
+        
+        # 5. Process all other prompt types
+        other_prompts = {k: v for k, v in prompt_responses.items() 
+                        if k not in ["recruitment_prompt", "company_prompt", 
+                                    "agency_prompt", "job_prompt", "jobadvert_prompt"]}
+        
+        for prompt_type, response in other_prompts.items():
+            try:
+                if prompt_type == "company_phone_number_prompt":
                     process_company_phone_number(db, url_id, response)
                 elif prompt_type == "email_prompt":
                     process_email(db, url_id, response)
@@ -104,16 +181,19 @@ def process_all_prompt_responses(db, url_id: int, prompt_responses: Dict[str, An
                     process_contacts(db, url_id, response)
                 elif prompt_type == "location_prompt":
                     process_location(db, url_id, response)
-                elif prompt_type == "jobadvert_prompt":
-                    process_job_advert(db, url_id, response)
                 elif prompt_type == "qualifications_prompt":
                     process_qualifications(db, url_id, response)
                 elif prompt_type == "duties_prompt":
                     process_duties(db, url_id, response)
                 else:
                     logger.warning(f"Unknown prompt type: {prompt_type}")
+                    results["failed"] += 1
+                    results["errors"].append({
+                        "prompt_type": prompt_type,
+                        "error": "Unknown prompt type"
+                    })
                     continue
-
+                
                 results["processed"] += 1
             except Exception as e:
                 logger.error(f"Failed to process {prompt_type}: {e}")
@@ -252,28 +332,76 @@ def process_recruitment(db, url_id: int, response: Any) -> None:
         db.update_field_by_id(url_id, "recruitment_flag", 0)
 
 
-def process_company(db, url_id: int, response: Any) -> None:
-    """Process company name."""
+def process_company(db, url_id: int, response: Any) -> Tuple[Optional[int], Optional[str]]:
+    """
+    Process company name and get company ID for linking to job adverts.
+    
+    Returns both company_id and company_name for later use in job linking.
+    """
     data = _ensure_dict(response)
-    company = data.get("company")
-    if company:
-        db.insert_company(url_id, company)
+    company_name = data.get("company")
+    if company_name:
+        db.insert_company(url_id, company_name)
+        # Get company_id for future reference
+        company_id = db.get_company_id(url_id, company_name)
+        return company_id, company_name
+    return None, None
 
 
 def process_agency(db, url_id: int, response: Any) -> None:
-    """Process agency name."""
+    """Process agency name and get recruiter ID for linking to job adverts."""
     data = _ensure_dict(response)
     agency = data.get("agency")
     if agency:
         db.insert_agency(url_id, agency)
+        # For recruiter_id, we use agency record since this is the recruiter
+        recruiter_id = None
+        # Check if there's a get_recruiter_id method
+        if hasattr(db, "get_recruiter_id"):
+            recruiter_id = db.get_recruiter_id(url_id, agency)
+        return recruiter_id
+    return None
 
 
-def process_job(db, url_id: int, response: Any) -> None:
-    """Process job title."""
+def process_job(db, url_id: int, response: Any, company_name: Optional[str] = None) -> None:
+    """
+    Process job title and link it to the correct company based on name.
+    
+    Args:
+        db: Database instance
+        url_id: URL ID
+        response: Job response data
+        company_name: Name of the company for this specific job (optional)
+    """
     data = _ensure_dict(response)
     title = data.get("title")
     if title:
-        db.insert_job_title(url_id, title)
+        # First insert the job to get its ID
+        db.insert_job_advert(url_id, title)
+        
+        # Get the job_advert_id we just created
+        job_advert_id = db.get_job_advert_id(url_id, title)
+        
+        if job_advert_id and company_name and hasattr(db, "link_job_advert_to_company"):
+            # Directly link the job to the company by name
+            db.link_job_advert_to_company(job_advert_id, company_name)
+            logger.info(f"Linked job '{title}' directly with company '{company_name}'")
+        else:
+            # Fall back to the old method of linking by URL ID
+            # Get company_id if available
+            company_id = None
+            if hasattr(db, "get_company_id_by_url"):
+                company_id = db.get_company_id_by_url(url_id)
+            
+            # Get recruiter_id if available
+            recruiter_id = None
+            if hasattr(db, "get_recruiter_id_by_url"):
+                recruiter_id = db.get_recruiter_id_by_url(url_id)
+            
+            # Update the job advert with company and recruiter IDs
+            if job_advert_id and (company_id or recruiter_id):
+                db.update_job_advert_relations(job_advert_id, company_id, recruiter_id)
+                logger.info(f"Updated job '{title}' with company_id {company_id} using URL-based match")
 
 
 def process_company_phone_number(db, url_id: int, response: Any) -> None:
@@ -481,6 +609,40 @@ def process_location(db, url_id: int, response: Any) -> None:
 def process_job_advert(db, url_id: int, response: Any) -> None:
     """Process job advertisement details."""
     data = _ensure_dict(response)
+    
+    # Get job_advert_id
+    job_advert_id = None
+    # Try to get the job_advert_id from the database
+    query_job_advert = "SELECT id FROM job_adverts WHERE url_id = ? LIMIT 1"
+    
+    try:
+        with db._execute_query(query_job_advert, (url_id,)) as cursor:
+            row = cursor.fetchone()
+            if row:
+                job_advert_id = row[0]
+                logger.info(f"Found job_advert_id {job_advert_id} for URL ID {url_id}")
+            
+            # If we found a job_advert_id, check if it needs company/recruiter linkage
+            if job_advert_id:
+                company_id = None
+                recruiter_id = None
+                
+                # Try to get company_id if method exists
+                if hasattr(db, "get_company_id_by_url"):
+                    company_id = db.get_company_id_by_url(url_id)
+                
+                # Try to get recruiter_id if method exists
+                if hasattr(db, "get_recruiter_id_by_url"):
+                    recruiter_id = db.get_recruiter_id_by_url(url_id)
+                
+                # Update job advert relations if needed
+                if (company_id or recruiter_id) and hasattr(db, "update_job_advert_relations"):
+                    db.update_job_advert_relations(job_advert_id, company_id, recruiter_id)
+    
+    except Exception as e:
+        logger.error(f"Error getting job_advert_id for URL ID {url_id}: {e}")
+    
+    # Continue with inserting job advert details
     db.insert_job_advert_details(
         url_id=url_id,
         description=data.get("description"),

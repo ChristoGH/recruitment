@@ -74,6 +74,13 @@ NON_LIST_PROMPTS = {
         '  "title": "name" or null\n'
         "}"
     ),
+        "industry_prompt": (
+        "Assistant, please extract the name of the industry in which this job is placed. "
+        "Return your answer in the following JSON format:\n"
+        "{\n"
+        '  "industry": "name" or null\n'
+        "}"
+    ),
     "company_phone_number_prompt": (
         "Assistant, please extract the contact phone number of the advertised job(s) from this article, if any. "
         "Return your answer in the following JSON format:\n"

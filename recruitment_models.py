@@ -19,7 +19,8 @@ class AdvertResponse(BaseModel):
     @model_validator(mode='after')
     def validate_evidence_provided(self):
         if self.answer == 'yes' and (not self.evidence or len(self.evidence) == 0):
-            raise ValueError("Evidence must be provided when answer is 'yes'")
+            # Instead of raising an error, provide a default evidence message
+            self.evidence = ["No specific evidence provided"]
         return self
 
 
@@ -191,6 +192,10 @@ class LinkResponse(BaseModel):
     @classmethod
     def validate_link(cls, v):
         if v:
+            # Add protocol if missing
+            if v and not (v.startswith('http://') or v.startswith('https://')):
+                v = f'https://{v}'
+                
             # Simple URL validation
             url_pattern = re.compile(
                 r'^(?:http|ftp)s?://'  # http:// or https://

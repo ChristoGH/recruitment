@@ -183,6 +183,17 @@ CREATE TABLE benefits (
 );
 ```
 
+### recruitment_evidence
+Recruitment evidence.
+```sql
+CREATE TABLE recruitment_evidence (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    url_id INTEGER NOT NULL,
+    evidence TEXT NOT NULL,
+    FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE
+);
+```
+
 ## Relationship Tables
 
 ### job_urls
@@ -450,16 +461,22 @@ This starts:
 #### Create a Search
 ```bash
 curl -X POST "http://localhost:8000/search" \
-  -H "Content-Type: application/json" \
-  -d '{
-    "id": "test_search",
-    "days_back": 7,
-    "recruitment_terms": [
-      "\"recruitment advert\"",
-      "\"job vacancy\"",
-      "\"hiring now\""
-    ]
-  }'
+-H "Content-Type: application/json" \
+-d '{
+  "id": "batch1",
+  "days_back": 7,
+  "excluded_domains": [],
+  "academic_suffixes": [],
+  "recruitment_terms": [
+    "recruitment advert",
+    "job vacancy",
+    "hiring now",
+    "employment opportunity",
+    "career opportunity",
+    "job advertisement",
+    "recruitment drive"
+  ]
+}'
 ```
 
 #### Check Search Status
@@ -508,6 +525,54 @@ For local development without Docker:
    python url_processing_service.py
    ```
 
+3. If you need to run both services and avoid port conflicts:
+   ```bash
+   # Terminal 1 - URL Discovery Service runs on port 8000 by default
+   python url_discovery_service.py
+   
+   # Terminal 2 - URL Processing Service can run on port 8002 or another port
+   python -m url_processing_service
+   ```
+
+4. To restart the URL processing service after code changes:
+   ```bash
+   # Stop the current service with Ctrl+C
+   # Then restart it with
+   cd /path/to/project/root && python -m url_processing_service
+   ```
+
+## Handling Common Issues
+
+### Empty Response Issues
+
+The URL processing service now handles empty responses from the LLM by providing appropriate default responses:
+- For list-based prompts (attributes, duties, etc.), it returns empty lists
+- For complex prompts (location, job advert), it returns structured objects with null fields
+- This ensures processing continues even if some prompts fail
+
+### Port Conflicts
+
+If you encounter port conflicts:
+1. Check which services are running on which ports:
+   ```bash
+   lsof -i :8000
+   lsof -i :8001
+   lsof -i :8002
+   ```
+2. Modify the port in the service file if needed:
+   ```python
+   # At the bottom of url_processing_service.py
+   if __name__ == "__main__":
+       import uvicorn
+       uvicorn.run(app, host="0.0.0.0", port=8002)  # Change port as needed
+   ```
+
+### Model Mapping Issues
+
+If you encounter a "No model class found for prompt key" warning:
+1. Check that all prompt keys in the prompts.py file are properly mapped in the get_model_for_prompt function
+2. Add any missing mappings to the model_map dictionary
+
 ## Troubleshooting
 
 ### Connection Issues with Neo4j
@@ -524,3 +589,5 @@ If you encounter RabbitMQ connection issues:
 1. Check the RabbitMQ management UI at http://localhost:15672 (login with guest/guest)
 2. Verify the queue "recruitment_urls" exists
 3. Check the logs for connection errors
+
+cat logs/url_processing_service.log | grep "Inserted"

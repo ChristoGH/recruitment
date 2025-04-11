@@ -14,6 +14,18 @@ services:
       - rabbitmq
     networks:
       - recruitment_network
+    volumes:
+      - ./logs:/app/logs
+    # Run discovery service immediately on startup and then hourly
+    command: >
+      sh -c "apt-get update && apt-get install -y cron curl &&
+      echo '0 * * * * cd /app && /usr/local/bin/python -m uvicorn url_discovery_service:app --host 0.0.0.0 --port 8000 >> /app/logs/cron.log 2>&1' > /etc/cron.d/discovery-cron &&
+      chmod 0644 /etc/cron.d/discovery-cron &&
+      crontab /etc/cron.d/discovery-cron &&
+      (nohup /usr/local/bin/python -m uvicorn url_discovery_service:app --host 0.0.0.0 --port 8000 > /app/logs/startup.log 2>&1 &) &&
+      sleep 10 &&
+      curl -X POST 'http://localhost:8000/search' -H 'Content-Type: application/json' -d '{\"id\":\"batch1\",\"days_back\":7}' > /app/logs/initial_run.log 2>&1 &&
+      cron -f"
 
   url_processing:
     build:
@@ -30,12 +42,17 @@ services:
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=guest
       - RABBITMQ_PASSWORD=guest
+      - RECRUITMENT_NEW_PATH=/data/recruitment_new.db
+      - RECRUITMENT_PATH=/data/recruitment.db
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
       - rabbitmq
     networks:
       - recruitment_network
+    volumes:
+      - ./logs:/app/logs
+      - ./data:/data
 
   rabbitmq:
     image: rabbitmq:3-management
