@@ -1,4 +1,4 @@
-FROM python:3.11-slim
+FROM python:3.9-slim
 
 WORKDIR /app
 
@@ -14,7 +14,10 @@ COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
-COPY . .
+COPY url_discovery_service.py .
+COPY start.sh .
+
+RUN chmod +x start.sh
 
 # Create logs directory
 RUN mkdir -p /app/logs
@@ -23,4 +26,4 @@ RUN mkdir -p /app/logs
 EXPOSE 8000
 
 # Command is now in docker-compose.yml
-CMD ["uvicorn", "url_discovery_service:app", "--host", "0.0.0.0", "--port", "8000"] 
+CMD ["/app/start.sh"] 
