@@ -40,42 +40,14 @@ from response_processor_functions import PromptResponseProcessor, ResponseProces
 from batch_processor import process_all_prompt_responses, direct_insert_skills
 from web_crawler_lib import crawl_website_sync, WebCrawlerResult, crawl_website_sync_v2
 from logging_config import setup_logging
+from libraries.config_validator import ConfigValidator
+from utils import get_model_for_prompt
 
 # Load environment variables
 load_dotenv()
 
 # Create module-specific logger
 logger = setup_logging("url_processing_service")
-
-# Map prompt keys to their corresponding model classes
-def get_model_for_prompt(prompt_key: str) -> Optional[Any]:
-    """Get the model class for a given prompt key."""
-    model_map = {
-        # LIST_PROMPTS
-        "recruitment_prompt": AdvertResponse,
-        "skills_prompt": SkillExperienceResponse,
-        "duties_prompt": DutiesResponse,
-        "qualifications_prompt": QualificationsResponse,
-        "benefits_prompt": BenefitsResponse,
-        "attributes_prompt": AttributesResponse,
-        
-        # NON_LIST_PROMPTS
-        "company_prompt": CompanyResponse,
-        "job_prompt": JobResponse,
-        "job_advert_prompt": JobAdvertResponse,
-        "jobadvert_prompt": JobAdvertResponse,
-        "agency_prompt": AgencyResponse,
-        "location_prompt": LocationResponse,
-        "contact_person_prompt": ContactPersonResponse,
-        "contacts_prompt": ContactPersonResponse,
-        "email_prompt": EmailResponse,
-        "phone_prompt": CompanyPhoneNumberResponse,
-        "company_phone_number_prompt": CompanyPhoneNumberResponse,
-        "link_prompt": LinkResponse,
-        "confirm_prompt": ConfirmResponse,
-    }
-    
-    return model_map.get(prompt_key)
 
 @asynccontextmanager
 async def lifespan(app: FastAPI):

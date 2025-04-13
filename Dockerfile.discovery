@@ -1,26 +1,43 @@
+FROM python:3.11-slim as builder
+
+WORKDIR /app
+
+# Install build dependencies
+RUN apt-get update && apt-get install -y \
+    build-essential \
+    && rm -rf /var/lib/apt/lists/*
+
+# Copy requirements and install dependencies
+COPY requirements.txt .
+RUN pip install --no-cache-dir --user -r requirements.txt
+
+# Final stage
 FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install system dependencies
+# Install only runtime dependencies
 RUN apt-get update && apt-get install -y \
     cron \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy requirements first to leverage Docker cache
-COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+# Copy Python packages from builder
+COPY --from=builder /root/.local/lib/python3.11/site-packages /usr/local/lib/python3.11/site-packages
 
-# Copy all application code
-COPY . .
+# Copy only necessary files
+COPY url_discovery_service.py .
+COPY logging_config.py .
+COPY libraries ./libraries
+COPY prompts.py .
+COPY recruitment_models.py .
 
 # Create logs directory
 RUN mkdir -p /app/logs
 
-# Set up cron job
-RUN echo "0 * * * * curl -X POST http://localhost:8000/search >> /app/logs/cron.log 2>&1" > /etc/cron.d/search-cron
-RUN chmod 0644 /etc/cron.d/search-cron
+# Set up cron job with proper logging
+RUN echo "0 * * * * curl -X POST http://localhost:8000/search >> /app/logs/cron.log 2>&1" > /etc/cron.d/search-cron && \
+    chmod 0644 /etc/cron.d/search-cron
 
 # Expose port
 EXPOSE 8000
