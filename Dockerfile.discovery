@@ -16,10 +16,10 @@ FROM python:3.11-slim
 
 WORKDIR /app
 
-# Install only runtime dependencies
+# Install runtime dependencies including cron and curl
 RUN apt-get update && apt-get install -y \
-    cron \
     curl \
+    cron \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy Python packages from builder
@@ -31,16 +31,16 @@ COPY logging_config.py .
 COPY libraries ./libraries
 COPY prompts.py .
 COPY recruitment_models.py .
+COPY search-cron /etc/cron.d/search-cron
 
-# Create logs directory
-RUN mkdir -p /app/logs
-
-# Set up cron job with proper logging
-RUN echo "0 * * * * curl -X POST http://localhost:8000/search >> /app/logs/cron.log 2>&1" > /etc/cron.d/search-cron && \
+# Create logs directory and set up log files
+RUN mkdir -p /app/logs && \
+    touch /app/logs/startup.log /app/logs/url_discovery_service.log /app/logs/cron.log && \
+    chmod 666 /app/logs/*.log && \
     chmod 0644 /etc/cron.d/search-cron
 
 # Expose port
 EXPOSE 8000
 
-# Start both cron and the service
+# Start both cron and the FastAPI service
 CMD service cron start && python -m uvicorn url_discovery_service:app --host 0.0.0.0 --port 8000 

@@ -598,77 +598,78 @@ processing_results = {}
 # Background task to process URLs from RabbitMQ queue
 async def process_urls_from_queue():
     """Process URLs from RabbitMQ queue."""
-    try:
-        # Get RabbitMQ connection
-        connection = get_rabbitmq_connection()
-        channel = connection.channel()
-        
-        # Declare queue
-        queue_name = "recruitment_urls"
-        channel.queue_declare(queue=queue_name, durable=True)
-        
-        # Set prefetch count to limit the number of unacknowledged messages
-        channel.basic_qos(prefetch_count=1)
-        
-        # Define callback function
-        def callback(ch, method, properties, body):
-            try:
-                # Parse message
-                message = json.loads(body)
-                url = message.get("url")
-                search_id = message.get("search_id")
-                
-                if not url:
-                    logger.error("Received message without URL")
+    while True:
+        try:
+            # Get RabbitMQ connection
+            connection = get_rabbitmq_connection()
+            channel = connection.channel()
+            
+            # Declare queue
+            queue_name = "recruitment_urls"
+            channel.queue_declare(queue=queue_name, durable=True)
+            
+            # Set prefetch count to limit the number of unacknowledged messages
+            channel.basic_qos(prefetch_count=1)
+            
+            # Define callback function
+            def callback(ch, method, properties, body):
+                try:
+                    # Parse message
+                    message = json.loads(body)
+                    url = message.get("url")
+                    search_id = message.get("search_id")
+                    
+                    if not url:
+                        logger.error("Received message without URL")
+                        ch.basic_ack(delivery_tag=method.delivery_tag)
+                        return
+                    
+                    logger.info(f"Processing URL from queue: {url}")
+                    
+                    # Update processing status
+                    processing_results[url] = {
+                        "status": "processing",
+                        "recruitment_flag": None,
+                        "error_message": None,
+                        "timestamp": datetime.now().isoformat()
+                    }
+                    
+                    # Process URL
+                    success, recruitment_flag, error_message = process_url(url)
+                    
+                    # Update processing status
+                    processing_results[url]["status"] = "completed" if success else "failed"
+                    processing_results[url]["recruitment_flag"] = recruitment_flag
+                    processing_results[url]["error_message"] = error_message
+                    
+                    # Acknowledge message
                     ch.basic_ack(delivery_tag=method.delivery_tag)
-                    return
-                
-                logger.info(f"Processing URL from queue: {url}")
-                
-                # Update processing status
-                processing_results[url] = {
-                    "status": "processing",
-                    "recruitment_flag": None,
-                    "error_message": None,
-                    "timestamp": datetime.now().isoformat()
-                }
-                
-                # Process URL
-                success, recruitment_flag, error_message = process_url(url)
-                
-                # Update processing status
-                processing_results[url]["status"] = "completed" if success else "failed"
-                processing_results[url]["recruitment_flag"] = recruitment_flag
-                processing_results[url]["error_message"] = error_message
-                
-                # Acknowledge message
-                ch.basic_ack(delivery_tag=method.delivery_tag)
-                
-            except Exception as e:
-                logger.error(f"Error processing message: {e}")
-                # Reject message and requeue
-                ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
-        
-        # Start consuming
-        channel.basic_consume(queue=queue_name, on_message_callback=callback)
-        
-        logger.info("Started consuming from RabbitMQ queue")
-        
-        # Instead of blocking with channel.start_consuming(), use a non-blocking approach
-        while True:
+                    
+                except Exception as e:
+                    logger.error(f"Error processing message: {e}")
+                    # Reject message and requeue
+                    ch.basic_nack(delivery_tag=method.delivery_tag, requeue=True)
+            
+            # Start consuming
+            channel.basic_consume(queue=queue_name, on_message_callback=callback)
+            
+            logger.info("Started consuming from RabbitMQ queue")
+            
+            # Keep consuming messages until connection is lost
             try:
-                # Process a single message and then yield control
-                connection.process_data_events()
-                await asyncio.sleep(0.1)  # Small delay to prevent CPU hogging
-            except Exception as e:
-                logger.error(f"Error in RabbitMQ consumer loop: {e}")
-                await asyncio.sleep(5)  # Wait before retrying
-        
-    except Exception as e:
-        logger.error(f"Error consuming from RabbitMQ queue: {e}")
-        # Try to reconnect
-        await asyncio.sleep(5)
-        await process_urls_from_queue()
+                channel.start_consuming()
+            except (pika.exceptions.ConnectionClosedByBroker,
+                   pika.exceptions.AMQPChannelError,
+                   pika.exceptions.AMQPConnectionError) as e:
+                logger.error(f"RabbitMQ connection lost: {e}")
+                # Let the outer loop handle reconnection
+                continue
+            
+        except Exception as e:
+            logger.error(f"Error in RabbitMQ consumer: {e}")
+            # Wait before retrying
+            await asyncio.sleep(5)
+            continue
 
 # API endpoints
 @app.post("/process", response_model=URLProcessingResponse)

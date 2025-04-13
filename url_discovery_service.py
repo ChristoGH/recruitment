@@ -22,6 +22,8 @@ from fastapi.middleware.cors import CORSMiddleware
 import pika
 import asyncio
 from dotenv import load_dotenv
+from contextlib import asynccontextmanager
+import uuid
 
 from logging_config import setup_logging
 from libraries.config_validator import ConfigValidator
@@ -31,22 +33,6 @@ load_dotenv()
 
 # Create module-specific logger
 logger = setup_logging("url_discovery_service")
-
-# Initialize FastAPI app
-app = FastAPI(
-    title="URL Discovery Service",
-    description="Service for discovering recruitment URLs and publishing them to a queue",
-    version="1.0.0"
-)
-
-# Add CORS middleware
-app.add_middleware(
-    CORSMiddleware,
-    allow_origins=["*"],
-    allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
-)
 
 # Pydantic models for API
 class SearchConfig(BaseModel):
@@ -76,7 +62,11 @@ class SearchStatus(BaseModel):
     urls_found: int
     timestamp: str
 
-# RabbitMQ connection
+# Global variables
+rabbitmq_connection = None
+rabbitmq_channel = None
+search_results: Dict[str, Dict] = {}
+
 def get_rabbitmq_connection():
     """Get a connection to RabbitMQ."""
     try:
@@ -102,6 +92,71 @@ def get_rabbitmq_connection():
     except Exception as e:
         logger.error(f"Failed to connect to RabbitMQ: {e}")
         raise HTTPException(status_code=500, detail=f"Failed to connect to RabbitMQ: {str(e)}")
+
+def get_or_create_rabbitmq_connection():
+    """Get existing RabbitMQ connection or create a new one."""
+    global rabbitmq_connection, rabbitmq_channel
+    
+    try:
+        # Check if connection is closed or doesn't exist
+        if not rabbitmq_connection or rabbitmq_connection.is_closed:
+            # Create new connection
+            rabbitmq_connection = get_rabbitmq_connection()
+            rabbitmq_channel = rabbitmq_connection.channel()
+            
+            # Declare queue
+            queue_name = "recruitment_urls"
+            rabbitmq_channel.queue_declare(queue=queue_name, durable=True)
+            
+        return rabbitmq_connection, rabbitmq_channel
+        
+    except Exception as e:
+        logger.error(f"Error creating RabbitMQ connection: {e}")
+        # Close connection if it exists
+        if rabbitmq_connection and not rabbitmq_connection.is_closed:
+            rabbitmq_connection.close()
+        rabbitmq_connection = None
+        rabbitmq_channel = None
+        raise
+
+def publish_urls_to_queue(urls: List[str], search_id: str):
+    """Publish URLs to RabbitMQ queue."""
+    max_retries = 3
+    retry_count = 0
+    
+    while retry_count < max_retries:
+        try:
+            # Get or create RabbitMQ connection
+            connection, channel = get_or_create_rabbitmq_connection()
+            
+            # Publish each URL to the queue
+            queue_name = "recruitment_urls"
+            for url in urls:
+                message = {
+                    "url": url,
+                    "search_id": search_id,
+                    "timestamp": datetime.now().isoformat()
+                }
+                
+                channel.basic_publish(
+                    exchange="",
+                    routing_key=queue_name,
+                    body=json.dumps(message),
+                    properties=pika.BasicProperties(
+                        delivery_mode=2,  # make message persistent
+                    )
+                )
+                
+            logger.info(f"Published {len(urls)} URLs to RabbitMQ queue")
+            return True
+            
+        except Exception as e:
+            logger.error(f"Error publishing to RabbitMQ queue (attempt {retry_count + 1}): {e}")
+            retry_count += 1
+            if retry_count < max_retries:
+                time.sleep(1)  # Wait before retrying
+                continue
+            raise
 
 # URL validation
 def is_valid_url(url: str) -> bool:
@@ -156,43 +211,6 @@ class RecruitmentAdSearch:
         logger.debug(f"Constructed query: {final_query}")
         return final_query
 
-    @lru_cache(maxsize=100)
-    def fetch_ads_with_retry(self, query: str, max_results: int = 200, max_retries: int = 3) -> List[str]:
-        """Fetch articles with retry logic for transient failures."""
-        articles = []
-        retry_count = 0
-        
-        while retry_count < max_retries:
-            try:
-                # Try with tld parameter
-                try:
-                    results = search(query, tld="com", lang="en", num=10, start=0, stop=max_results, pause=2)
-                except TypeError:
-                    # Fall back to version without tld parameter
-                    results = search(query, lang="en", num_results=100, sleep_interval=5)
-
-                # Validate and filter results
-                for url in results:
-                    if self.is_valid_recruitment_site(url):
-                        articles.append(url)
-                        logger.debug(f"Found valid URL: {url}")
-                
-                # Log results per search term
-                for term in self.recruitment_terms:
-                    term_results = [url for url in articles if term.lower() in url.lower()]
-                    logger.info(f"Found {len(term_results)} results for term: {term}")
-                
-                return articles
-                
-            except Exception as e:
-                retry_count += 1
-                logger.warning(f"Attempt {retry_count} failed: {str(e)}")
-                if retry_count < max_retries:
-                    time.sleep(2 ** retry_count)  # Exponential backoff
-                else:
-                    logger.error(f"Failed to fetch articles after {max_retries} attempts: {str(e)}")
-                    return []
-
     def get_date_range(self) -> tuple[str, str]:
         """Get the date range for the search."""
         end_date = datetime.now()
@@ -208,59 +226,35 @@ class RecruitmentAdSearch:
         query = self.construct_query(start_date=start_date, end_date=end_date)
         logger.info(f"Searching for recruitment ads with query: {query}")
         
-        ads = self.fetch_ads_with_retry(query)
-        logger.info(f"Retrieved {len(ads)} recruitment ads in the past {self.days_back} day(s).")
-        
-        return ads
+        ads = []
+        try:
+            # Try with tld parameter
+            try:
+                results = search(query, tld="com", lang="en", num=10, start=0, stop=200, pause=2)
+            except TypeError:
+                # Fall back to version without tld parameter
+                results = search(query, lang="en", num_results=100, sleep_interval=5)
 
-# Store search results in memory (in a real app, use Redis or a database)
-search_results = {}
+            # Validate and filter results
+            for url in results:
+                if self.is_valid_recruitment_site(url):
+                    ads.append(url)
+                    logger.debug(f"Found valid URL: {url}")
+            
+            # Log results per search term
+            for term in self.recruitment_terms:
+                term_results = [url for url in ads if term.lower() in url.lower()]
+                logger.info(f"Found {len(term_results)} results for term: {term}")
+            
+            return ads
+            
+        except Exception as e:
+            logger.error(f"Error fetching recruitment ads: {e}")
+            return []
 
-# Background task to publish URLs to RabbitMQ
-async def publish_urls_to_queue(urls: List[str], search_id: str):
-    """Publish URLs to RabbitMQ queue."""
-    try:
-        # Get RabbitMQ connection
-        connection = get_rabbitmq_connection()
-        channel = connection.channel()
-        
-        # Declare queue
-        queue_name = "recruitment_urls"
-        channel.queue_declare(queue=queue_name, durable=True)
-        
-        # Publish each URL to the queue
-        for url in urls:
-            message = {
-                "url": url,
-                "search_id": search_id,
-                "timestamp": datetime.now().isoformat()
-            }
-            channel.basic_publish(
-                exchange="",
-                routing_key=queue_name,
-                body=json.dumps(message),
-                properties=pika.BasicProperties(
-                    delivery_mode=2,  # make message persistent
-                )
-            )
-            logger.info(f"Published URL to queue: {url}")
-        
-        # Close connection
-        connection.close()
-        
-        # Update search status
-        search_results[search_id]["status"] = "completed"
-        search_results[search_id]["urls_found"] = len(urls)
-        
-    except Exception as e:
-        logger.error(f"Error publishing URLs to queue: {e}")
-        search_results[search_id]["status"] = "failed"
-        search_results[search_id]["error"] = str(e)
-
-# API endpoints
-@app.post("/search", response_model=SearchResponse)
-async def create_search(search_config: SearchConfig, background_tasks: BackgroundTasks):
-    """Create a new search for recruitment URLs."""
+# Core search functionality
+async def perform_search(search_config: SearchConfig, background_tasks: BackgroundTasks) -> SearchResponse:
+    """Perform a search for recruitment URLs."""
     try:
         # Create search ID
         search_id = f"{search_config.id}_{datetime.now().strftime('%Y%m%d_%H%M%S')}"
@@ -296,6 +290,138 @@ async def create_search(search_config: SearchConfig, background_tasks: Backgroun
     except Exception as e:
         logger.error(f"Error creating search: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+# Background task to periodically trigger search
+async def periodic_search(background_tasks: BackgroundTasks, search_config: dict) -> dict:
+    """
+    Perform a periodic search and publish URLs to RabbitMQ queue.
+    
+    Args:
+        background_tasks: FastAPI BackgroundTasks instance
+        search_config: Search configuration dictionary
+        
+    Returns:
+        dict: Search results including search_id and status
+    """
+    try:
+        # Convert dict to SearchConfig object
+        config = SearchConfig(**search_config)
+        
+        # Generate unique search ID
+        search_id = str(uuid.uuid4())
+        
+        # Initialize search results
+        search_results[search_id] = {
+            "status": "in_progress",
+            "urls_found": 0,
+            "error": None,
+            "start_time": datetime.utcnow().isoformat(),
+            "end_time": None
+        }
+        
+        # Perform search
+        try:
+            response = await perform_search(config, background_tasks)
+            
+            # Update search results with found URLs
+            search_results[search_id]["urls_found"] = response.urls_found
+            
+            # Publish URLs to queue
+            try:
+                await publish_urls_to_queue(response.urls, search_id)
+                search_results[search_id]["status"] = "completed"
+            except Exception as e:
+                logger.error(f"Error publishing URLs to queue: {str(e)}")
+                search_results[search_id]["status"] = "failed"
+                search_results[search_id]["error"] = f"Queue publishing error: {str(e)}"
+                raise HTTPException(
+                    status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                    detail=f"Failed to publish URLs to queue: {str(e)}"
+                )
+                
+        except Exception as e:
+            logger.error(f"Error during search: {str(e)}")
+            search_results[search_id]["status"] = "failed"
+            search_results[search_id]["error"] = f"Search error: {str(e)}"
+            raise HTTPException(
+                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                detail=f"Search failed: {str(e)}"
+            )
+            
+        finally:
+            # Update end time
+            search_results[search_id]["end_time"] = datetime.utcnow().isoformat()
+            
+        return {
+            "search_id": search_id,
+            "status": search_results[search_id]["status"],
+            "urls_found": search_results[search_id]["urls_found"]
+        }
+        
+    except Exception as e:
+        logger.error(f"Unexpected error in periodic_search: {str(e)}")
+        raise HTTPException(
+            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            detail=f"Unexpected error: {str(e)}"
+        )
+
+@asynccontextmanager
+async def lifespan(app: FastAPI):
+    """Lifespan context manager for FastAPI application."""
+    # Create background tasks instance
+    background_tasks = BackgroundTasks()
+    
+    # Default search configuration
+    default_config = {
+        "id": "periodic_search",
+        "days_back": 7,
+        "excluded_domains": [],
+        "academic_suffixes": [],
+        "recruitment_terms": [
+            '"recruitment advert"',
+            '"job vacancy"',
+            '"hiring now"',
+            '"employment opportunity"',
+            '"career opportunity"',
+            '"job advertisement"',
+            '"recruitment drive"'
+        ]
+    }
+    
+    # Startup: Start background tasks
+    background_task = asyncio.create_task(periodic_search(background_tasks, default_config))
+    
+    yield  # This is where the application runs
+    
+    # Shutdown: Cancel background tasks
+    background_task.cancel()
+    try:
+        await background_task
+    except asyncio.CancelledError:
+        pass
+
+# Initialize FastAPI app with lifespan
+app = FastAPI(
+    title="URL Discovery Service",
+    description="Service for discovering recruitment URLs and publishing them to a queue",
+    version="1.0.0",
+    lifespan=lifespan
+)
+
+# Add CORS middleware
+app.add_middleware(
+    CORSMiddleware,
+    allow_origins=["*"],
+    allow_credentials=True,
+    allow_methods=["*"],
+    allow_headers=["*"],
+)
+
+# API endpoints
+@app.post("/search", response_model=SearchResponse)
+async def create_search(search_config: SearchConfig, background_tasks: BackgroundTasks):
+    """Create a new search for recruitment URLs."""
+    return await perform_search(search_config=search_config, background_tasks=background_tasks)
 
 @app.get("/search/{search_id}", response_model=SearchStatus)
 async def get_search_status(search_id: str):

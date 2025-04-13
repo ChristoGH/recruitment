@@ -1,0 +1,4 @@
+# Run search job every hour
+0 * * * * curl -X POST http://localhost:8000/search -H "Content-Type: application/json" -d '{"id": "batch_$(date +\%Y\%m\%d_\%H\%M\%S)"}' >> /app/logs/cron.log 2>&1
+
+# An empty line is required at the end of this file for a valid cron file 
