@@ -318,6 +318,19 @@ async def get_search_urls(search_id: str):
     
     return search_results[search_id]["urls"]
 
+@app.get("/health")
+async def health_check():
+    """Health check endpoint for Docker healthcheck."""
+    try:
+        # Check RabbitMQ connection
+        connection = get_rabbitmq_connection()
+        if connection and not connection.is_closed:
+            connection.close()
+            return {"status": "healthy", "rabbitmq": "connected"}
+        return {"status": "unhealthy", "rabbitmq": "disconnected"}
+    except Exception as e:
+        return {"status": "unhealthy", "error": str(e)}
+
 if __name__ == "__main__":
     import uvicorn
     uvicorn.run(app, host="0.0.0.0", port=8000) 

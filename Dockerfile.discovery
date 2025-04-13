@@ -1,29 +1,29 @@
-FROM python:3.9-slim
+FROM python:3.11-slim
 
 WORKDIR /app
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y \
-    build-essential \
-    curl \
     cron \
+    curl \
     && rm -rf /var/lib/apt/lists/*
 
 # Copy requirements first to leverage Docker cache
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy application code
-COPY url_discovery_service.py .
-COPY start.sh .
-
-RUN chmod +x start.sh
+# Copy all application code
+COPY . .
 
 # Create logs directory
 RUN mkdir -p /app/logs
 
+# Set up cron job
+RUN echo "0 * * * * curl -X POST http://localhost:8000/search >> /app/logs/cron.log 2>&1" > /etc/cron.d/search-cron
+RUN chmod 0644 /etc/cron.d/search-cron
+
 # Expose port
 EXPOSE 8000
 
-# Command is now in docker-compose.yml
-CMD ["/app/start.sh"] 
+# Start both cron and the service
+CMD service cron start && python -m uvicorn url_discovery_service:app --host 0.0.0.0 --port 8000 

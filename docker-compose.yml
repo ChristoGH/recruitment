@@ -11,12 +11,17 @@ services:
       - RABBITMQ_USER=guest
       - RABBITMQ_PASSWORD=guest
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
     networks:
       - recruitment_network
     volumes:
       - ./logs:/app/logs
-    command: ["/app/start.sh"]
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   url_processing:
     build:
@@ -38,12 +43,18 @@ services:
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
-      - rabbitmq
+      rabbitmq:
+        condition: service_healthy
     networks:
       - recruitment_network
     volumes:
       - ./logs:/app/logs
       - ./data:/data
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
   rabbitmq:
     image: rabbitmq:3-management
@@ -54,6 +65,11 @@ services:
       - rabbitmq_data:/var/lib/rabbitmq
     networks:
       - recruitment_network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
 
 volumes:
   rabbitmq_data:
