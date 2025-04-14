@@ -148,7 +148,7 @@ async def publish_urls_to_queue(urls: List[str], search_id: str):
                 )
                 
             logger.info(f"Published {len(urls)} URLs to RabbitMQ queue")
-            return True
+            return
             
         except Exception as e:
             logger.error(f"Error publishing to RabbitMQ queue (attempt {retry_count + 1}): {e}")

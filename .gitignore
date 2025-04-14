@@ -92,3 +92,5 @@ codeship.env
 application/casedispatcher/log/
 .env
 *.db
+recruitment.db.backup_*
+recruitment.code-workspace

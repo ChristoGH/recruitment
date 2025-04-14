@@ -67,7 +67,7 @@ NON_LIST_PROMPTS = {
         "}"
     ),
     "industry_prompt": (
-        "Assistant, please extract the industry or sector this job belongs to from this article, if any. "
+        "Assistant, please extract the industry or sector this advertised job belongs to from this text, if any. "
         "Return your answer in the following JSON format:\n"
         "{\n"
         '  "industry": "industry name" or null\n'

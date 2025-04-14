@@ -386,10 +386,10 @@ class RecruitmentDatabase:
         query = """
             CREATE TABLE IF NOT EXISTS duties (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url_id INTEGER NOT NULL,
+                job_advert_id INTEGER NOT NULL,
                 duty TEXT NOT NULL,
-                UNIQUE (url_id, duty),
-                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
+                UNIQUE (job_advert_id, duty),
+                FOREIGN KEY (job_advert_id) REFERENCES job_adverts (id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """
         with self._execute_query(query):
@@ -400,10 +400,10 @@ class RecruitmentDatabase:
         query = """
             CREATE TABLE IF NOT EXISTS benefits (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url_id INTEGER NOT NULL,
+                job_advert_id INTEGER NOT NULL,
                 benefit TEXT NOT NULL,
-                UNIQUE (url_id, benefit),
-                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
+                UNIQUE (job_advert_id, benefit),
+                FOREIGN KEY (job_advert_id) REFERENCES job_adverts (id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """
         with self._execute_query(query):
@@ -431,13 +431,13 @@ class RecruitmentDatabase:
         """Create the 'location' table."""
         query = """CREATE TABLE IF NOT EXISTS location (
     id INTEGER PRIMARY KEY AUTOINCREMENT,
-    url_id INTEGER NOT NULL,
+    job_advert_id INTEGER NOT NULL,
     country TEXT,
     province TEXT,
     city TEXT,
     street_address TEXT,
-    UNIQUE (url_id),
-    FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
+    UNIQUE (job_advert_id),
+    FOREIGN KEY (job_advert_id) REFERENCES job_adverts (id) ON DELETE CASCADE ON UPDATE CASCADE
 )
 
         """
@@ -771,17 +771,21 @@ class RecruitmentDatabase:
         with self._execute_query(query, (url_id, skill)):
             self.logger.info(f"Inserted job skill for URL ID {url_id}")
 
-    def insert_qualification(self, url_id: int, qualification: str) -> None:
+    def insert_qualification(self, job_advert_id: int, qualification: str) -> None:
         """
         Insert a qualification record.
 
         Args:
-            url_id: Associated URL ID.
-            qualification: Job qualification.
+            job_advert_id: Associated job advert ID.
+            qualification: Qualification text.
         """
-        query = "INSERT INTO qualifications (url_id, qualification) VALUES (?, ?)"
-        with self._execute_query(query, (url_id, qualification)):
-            self.logger.info(f"Inserted qualification for URL ID {url_id}")
+        # Make sure the table exists
+        self._create_qualifications_table()
+        
+        # Insert the qualification
+        insert_query = "INSERT OR IGNORE INTO qualifications (job_advert_id, qualification) VALUES (?, ?)"
+        with self._execute_query(insert_query, (job_advert_id, qualification)):
+            self.logger.info(f"Inserted qualification '{qualification}' for job advert ID {job_advert_id}")
 
 
     def insert_candidate(self, url_id: int, name: str) -> None:
@@ -822,19 +826,47 @@ class RecruitmentDatabase:
             row = cursor.fetchone()
             return row[0] if row else None
 
-    def insert_job_advert(self, url_id: int, title: str, company_id: Optional[int] = None, recruiter_id: Optional[int] = None) -> None:
+    def insert_job_advert(self, url_id: int, title: str = None, company_id: Optional[int] = None, 
+                         recruiter_id: Optional[int] = None, description: str = None, 
+                         salary: str = None, duration: str = None, start_date: str = None, 
+                         end_date: str = None, posted_date: str = None, 
+                         application_deadline: str = None) -> int:
         """
-        Insert a job advert record with company and recruiter information.
+        Insert a job advert record with all details.
 
         Args:
             url_id: Associated URL ID.
-            title: Job advert title.
+            title: Job advert title (optional).
             company_id: ID of the company offering the job (optional).
             recruiter_id: ID of the recruiter for the job (optional).
+            description: Job description (optional).
+            salary: Salary information (optional).
+            duration: Job duration (optional).
+            start_date: Start date (optional).
+            end_date: End date (optional).
+            posted_date: Posted date (optional).
+            application_deadline: Application deadline (optional).
+            
+        Returns:
+            int: The ID of the inserted job advert.
         """
-        query = "INSERT INTO job_adverts (url_id, title, company_id, recruiter_id) VALUES (?, ?, ?, ?)"
-        with self._execute_query(query, (url_id, title, company_id, recruiter_id)):
-            self.logger.info(f"Inserted job advert for URL ID {url_id} with company_id {company_id} and recruiter_id {recruiter_id}")
+        # Make sure the table exists
+        self._create_job_advert_table()
+        
+        # Insert the job advert
+        insert_query = """
+            INSERT INTO job_adverts 
+            (url_id, title, company_id, recruiter_id, description, salary, duration, 
+             start_date, end_date, posted_date, application_deadline) 
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        """
+        with self._execute_query(insert_query, (
+                url_id, title, company_id, recruiter_id, description, salary, duration,
+                start_date, end_date, posted_date, application_deadline
+        )) as cursor:
+            job_advert_id = cursor.lastrowid
+            self.logger.info(f"Inserted job advert with ID {job_advert_id} for URL ID {url_id}")
+            return job_advert_id
 
     def update_job_advert_relations(self, job_advert_id: int, company_id: Optional[int] = None, recruiter_id: Optional[int] = None) -> None:
         """
@@ -922,18 +954,22 @@ class RecruitmentDatabase:
         with self._execute_query(query, (url_id, title)):
             self.logger.info(f"Inserted job title '{title}' for URL ID {url_id}")
 
-    def insert_skill(self, url_id: int, skill: str, experience: str = None) -> None:
+    def insert_skill(self, job_advert_id: int, skill: str, experience: str = None) -> None:
         """
-        Insert a skill record with optional experience information.
+        Insert a skill record.
 
         Args:
-            url_id: Associated URL ID.
-            skill: Required skill.
-            experience: Experience requirement for the skill (optional).
+            job_advert_id: Associated job advert ID.
+            skill: Skill name.
+            experience: Experience level (optional).
         """
-        query = "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)"
-        with self._execute_query(query, (url_id, skill, experience)):
-            self.logger.info(f"Inserted skill '{skill}' with experience '{experience}' for URL ID {url_id}")
+        # Make sure the table exists
+        self._create_skills_table()
+        
+        # Insert the skill
+        insert_query = "INSERT OR IGNORE INTO skills (job_advert_id, skill, experience) VALUES (?, ?, ?)"
+        with self._execute_query(insert_query, (job_advert_id, skill, experience)):
+            self.logger.info(f"Inserted skill '{skill}' for job advert ID {job_advert_id}")
 
     def insert_company_phone_number(self, url_id: int, number: str) -> None:
         """
@@ -974,42 +1010,46 @@ class RecruitmentDatabase:
             self.logger.info(f"Inserted link for URL ID {url_id}")
 
 
-    def insert_benefit(self, url_id: int, benefit: str) -> None:
+    def insert_benefit(self, job_advert_id: int, benefit: str) -> None:
         """
         Insert a benefit record.
 
         Args:
-            url_id: Associated URL ID.
+            job_advert_id: Associated job advert ID.
             benefit: Job benefit.
         """
-        query = "INSERT OR IGNORE INTO benefits (url_id, benefit) VALUES (?, ?)"
-        with self._execute_query(query, (url_id, benefit)):
-            self.logger.info(f"Inserted benefit '{benefit}' for URL ID {url_id}")
+        query = "INSERT OR IGNORE INTO benefits (job_advert_id, benefit) VALUES (?, ?)"
+        with self._execute_query(query, (job_advert_id, benefit)):
+            self.logger.info(f"Inserted benefit '{benefit}' for job advert ID {job_advert_id}")
 
-    def insert_duty(self, url_id: int, duty: str) -> None:
+    def insert_duty(self, job_advert_id: int, duty: str) -> None:
         """
         Insert a duty record.
 
         Args:
-            url_id: Associated URL ID.
+            job_advert_id: Associated job advert ID.
             duty: Job duty.
         """
-        query = "INSERT OR IGNORE INTO duties (url_id, duty) VALUES (?, ?)"
-        with self._execute_query(query, (url_id, duty)):
-            self.logger.info(f"Inserted duty '{duty}' for URL ID {url_id}")
+        query = "INSERT OR IGNORE INTO duties (job_advert_id, duty) VALUES (?, ?)"
+        with self._execute_query(query, (job_advert_id, duty)):
+            self.logger.info(f"Inserted duty '{duty}' for job advert ID {job_advert_id}")
 
 
-    def insert_attribute(self, url_id: int, attribute: str) -> None:
+    def insert_attribute(self, job_advert_id: int, attribute: str) -> None:
         """
         Insert an attribute record.
 
         Args:
-            url_id: Associated URL ID.
-            attribute: Required attribute.
+            job_advert_id: Associated job advert ID.
+            attribute: Attribute text.
         """
-        query = "INSERT OR IGNORE INTO attributes (url_id, attribute) VALUES (?, ?)"
-        with self._execute_query(query, (url_id, attribute)):
-            self.logger.info(f"Inserted attribute '{attribute}' for URL ID {url_id}")
+        # Make sure the table exists
+        self._create_attributes_table()
+        
+        # Insert the attribute
+        insert_query = "INSERT OR IGNORE INTO attributes (job_advert_id, attribute) VALUES (?, ?)"
+        with self._execute_query(insert_query, (job_advert_id, attribute)):
+            self.logger.info(f"Inserted attribute '{attribute}' for job advert ID {job_advert_id}")
 
 
     def insert_contact_person(self, url_id: int, name: str) -> None:
@@ -1025,81 +1065,67 @@ class RecruitmentDatabase:
             self.logger.info(f"Inserted contact person '{name}' for URL ID {url_id}")
 
 
-    def insert_location(self, url_id: int, country: str = None, province: str = None,
+    def insert_location(self, job_advert_id: int, country: str = None, province: str = None,
                         city: str = None, street_address: str = None) -> None:
         """
         Insert a location record.
 
         Args:
-            url_id: Associated URL ID.
+            job_advert_id: Associated job advert ID.
             country: Country name (optional).
             province: Province/state name (optional).
             city: City name (optional).
             street_address: Street address (optional).
         """
-        query = """
-            INSERT OR IGNORE INTO location 
-            (url_id, country, province, city, street_address) 
+        # Make sure the table exists
+        self._create_location_table()
+        
+        # Insert the location
+        insert_query = """
+            INSERT OR REPLACE INTO location 
+            (job_advert_id, country, province, city, street_address) 
             VALUES (?, ?, ?, ?, ?)
         """
-        with self._execute_query(query, (url_id, country, province, city, street_address)):
-            self.logger.info(f"Inserted location information for URL ID {url_id}")
+        with self._execute_query(insert_query, (job_advert_id, country, province, city, street_address)):
+            self.logger.info(f"Inserted location for job advert ID {job_advert_id}")
 
 
-    def insert_job_advert_details(self, url_id: int, description: str = None, salary: str = None,
+    def insert_job_advert_details(self, job_advert_id: int, description: str = None, salary: str = None,
                                  duration: str = None, start_date: str = None, end_date: str = None,
                                  posted_date: str = None, application_deadline: str = None) -> None:
         """
-        Insert job advertisement details.
+        Insert or update job advert details.
 
         Args:
-            url_id: Associated URL ID.
+            job_advert_id: Job advert ID.
             description: Job description (optional).
             salary: Salary information (optional).
             duration: Job duration (optional).
             start_date: Start date (optional).
             end_date: End date (optional).
-            posted_date: When the job was posted (optional).
+            posted_date: Posted date (optional).
             application_deadline: Application deadline (optional).
         """
-        # First, check if there's a corresponding job_advert for this url_id
-        query_job_advert = "SELECT id FROM job_adverts WHERE url_id = ? LIMIT 1"
-        job_advert_id = None
+        # Make sure the table exists
+        self._create_job_advert_table()
         
-        try:
-            with self._execute_query(query_job_advert, (url_id,)) as cursor:
-                row = cursor.fetchone()
-                if row:
-                    job_advert_id = row[0]
-                    self.logger.info(f"Found job_advert_id {job_advert_id} for URL ID {url_id}")
-                else:
-                    # Instead of proceeding with NULL job_advert_id, we should insert a new job_advert record
-                    insert_job_advert_query = "INSERT INTO job_adverts (url_id) VALUES (?)"
-                    with self._execute_query(insert_job_advert_query, (url_id,)) as cursor:
-                        job_advert_id = cursor.lastrowid
-                        self.logger.info(f"Created new job_advert with ID {job_advert_id} for URL ID {url_id}")
-        except Exception as e:
-            self.logger.error(f"Error finding or creating job_advert_id for URL ID {url_id}: {e}")
-            return  # Exit early if we can't establish the job_advert_id
-        
-        # Now insert the job advert details with the job_advert_id
-        query = """
-            INSERT OR IGNORE INTO job_advert_forms 
-            (url_id, job_advert_id, description, salary, duration, start_date, end_date, posted_date, application_deadline) 
-            VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+        # Update the job advert details
+        update_query = """
+            UPDATE job_adverts 
+            SET description = ?,
+                salary = ?,
+                duration = ?,
+                start_date = ?,
+                end_date = ?,
+                posted_date = ?,
+                application_deadline = ?
+            WHERE id = ?
         """
-        with self._execute_query(query, (
-            url_id, 
-            job_advert_id,
-            description, 
-            salary, 
-            duration,
-            start_date, 
-            end_date, 
-            posted_date, 
-            application_deadline
+        with self._execute_query(update_query, (
+                description, salary, duration, start_date, end_date, 
+                posted_date, application_deadline, job_advert_id
         )):
-            self.logger.info(f"Inserted job advert details for URL ID {url_id} with job_advert_id {job_advert_id}")
+            self.logger.info(f"Updated job advert details for job advert ID {job_advert_id}")
 
 
     def _create_recruitment_evidence_table(self) -> None:
@@ -1107,184 +1133,71 @@ class RecruitmentDatabase:
         query = """
             CREATE TABLE IF NOT EXISTS recruitment_evidence (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url_id INTEGER NOT NULL,
+                job_advert_id INTEGER NOT NULL,
                 evidence TEXT NOT NULL,
-                UNIQUE (url_id, evidence),
-                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
+                UNIQUE (job_advert_id, evidence),
+                FOREIGN KEY (job_advert_id) REFERENCES job_adverts (id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """
         with self._execute_query(query):
             self.logger.info("Table 'recruitment_evidence' created or verified.")
             
-    def insert_recruitment_evidence(self, url_id: int, evidence: str) -> None:
+    def insert_recruitment_evidence(self, job_advert_id: int, evidence: str) -> None:
         """
         Insert recruitment evidence record.
 
         Args:
-            url_id: Associated URL ID.
+            job_advert_id: Associated job advert ID.
             evidence: Evidence text.
         """
         # Make sure the table exists
         self._create_recruitment_evidence_table()
         
         # Insert the evidence
-        insert_query = "INSERT OR IGNORE INTO recruitment_evidence (url_id, evidence) VALUES (?, ?)"
-        with self._execute_query(insert_query, (url_id, evidence)):
-            self.logger.info(f"Inserted recruitment evidence for URL ID {url_id}")
+        insert_query = "INSERT OR IGNORE INTO recruitment_evidence (job_advert_id, evidence) VALUES (?, ?)"
+        with self._execute_query(insert_query, (job_advert_id, evidence)):
+            self.logger.info(f"Inserted recruitment evidence for job advert ID {job_advert_id}")
 
 
     # Methods to handle bulk inserts for list-returning prompts
 
-    def insert_skills_list(self, url_id: int, skills_data: list) -> None:
+    def insert_skills_list(self, job_advert_id: int, skills_data: list) -> None:
         """
-        Insert multiple skills with their associated experience requirements for a URL.
-        Handles skills in tuple, list, dict, or string format.
+        Insert multiple skills for a job advert.
 
         Args:
-            url_id: Associated URL ID.
-            skills_data: List of skill items in various formats:
-                - Tuples: [(skill1, exp1), (skill2, exp2), (skill3, None)]
-                - Lists from converted tuples: [["skill1", "exp1"], ["skill2", "exp2"]]
-                - SkillExperience objects from Pydantic model
-                - Strings (for skills without experience data)
-                - Dictionaries with skill and experience keys
+            job_advert_id: Associated job advert ID.
+            skills_data: List of skills, which can be strings or dictionaries with 'skill' and 'experience' keys.
         """
         if not skills_data:
-            self.logger.warning(f"No skills data provided for URL ID {url_id}")
             return
 
-        self.logger.info(f"Inserting {len(skills_data)} skills for URL ID {url_id}")
+        for skill_item in skills_data:
+            if isinstance(skill_item, dict):
+                skill = skill_item.get('skill')
+                experience = skill_item.get('experience')
+                if skill:
+                    self.insert_skill(job_advert_id, skill, experience)
+            elif isinstance(skill_item, str):
+                self.insert_skill(job_advert_id, skill_item)
+            elif isinstance(skill_item, tuple) and len(skill_item) >= 2:
+                self.insert_skill(job_advert_id, skill_item[0], skill_item[1])
+            elif isinstance(skill_item, list) and len(skill_item) >= 2:
+                self.insert_skill(job_advert_id, skill_item[0], skill_item[1])
 
-        # For debugging purposes
-        if self.logger.isEnabledFor(logging.DEBUG):
-            self.logger.debug(f"Raw skills data: {skills_data}")
-
-        operations = []
-        successful_skills = []
-        failed_skills = []
-
-        for i, skill_item in enumerate(skills_data):
-            try:
-                skill = None
-                experience = None
-
-                # Handle different input formats
-                if isinstance(skill_item, tuple):
-                    # Handle tuple format (skill, experience)
-                    if len(skill_item) >= 2:
-                        skill, experience = skill_item
-                    else:
-                        skill, experience = skill_item[0], None
-
-                    self.logger.debug(f"Processed tuple format: ({skill}, {experience})")
-
-                elif isinstance(skill_item, list):
-                    # Handle list format (converted from tuple)
-                    if len(skill_item) >= 2:
-                        skill, experience = skill_item[0], skill_item[1]
-                    else:
-                        skill, experience = skill_item[0], None
-
-                    self.logger.debug(f"Processed list format: {skill_item} -> ({skill}, {experience})")
-
-                elif isinstance(skill_item, dict) and 'skill' in skill_item:
-                    # Handle dictionary format
-                    skill = skill_item['skill']
-                    experience = skill_item.get('experience')
-
-                    self.logger.debug(f"Processed dict format: {skill_item} -> ({skill}, {experience})")
-
-                elif hasattr(skill_item, 'skill') and hasattr(skill_item, 'experience'):
-                    # Handle SkillExperience objects from Pydantic model
-                    skill = skill_item.skill
-                    experience = skill_item.experience
-
-                    self.logger.debug(f"Processed object format with attributes -> ({skill}, {experience})")
-
-                elif hasattr(skill_item, 'model_dump'):
-                    # Handle full Pydantic model object
-                    data = skill_item.model_dump()
-                    skill = data.get('skill')
-                    experience = data.get('experience')
-
-                    self.logger.debug(f"Processed model_dump format: {data} -> ({skill}, {experience})")
-
-                elif isinstance(skill_item, str):
-                    # Handle string format (for skills without experience data)
-                    skill = skill_item
-                    experience = None
-
-                    self.logger.debug(f"Processed string format: {skill_item} -> ({skill}, None)")
-
-                else:
-                    # Try to convert to string as last resort
-                    self.logger.warning(
-                        f"Unrecognized skill format at index {i}: {type(skill_item).__name__} - {skill_item}")
-                    try:
-                        skill = str(skill_item)
-                        experience = None
-                        self.logger.debug(f"Converted unknown format to string: {skill}")
-                    except:
-                        failed_skills.append((str(skill_item), "Unrecognized format"))
-                        continue
-
-                # Ensure skill is not empty
-                if not skill or not isinstance(skill, str) or not skill.strip():
-                    self.logger.warning(f"Skipping empty skill at index {i}")
-                    failed_skills.append(("", "Empty skill"))
-                    continue
-
-                # Normalize "not_listed" to None
-                if experience == "not_listed" or (isinstance(experience, str) and not experience.strip()):
-                    experience = None
-
-                # Clean the skill name
-                skill = skill.strip()
-
-                # Add operation to insert the skill
-                operations.append((
-                    "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)",
-                    (url_id, skill, experience)
-                ))
-
-                successful_skills.append((skill, experience))
-
-            except Exception as e:
-                self.logger.error(f"Error processing skill at index {i}: {e}")
-                failed_skills.append((str(skill_item), str(e)))
-
-        # Execute all operations in a single transaction for efficiency
-        if operations:
-            try:
-                self._execute_in_transaction(operations)
-                self.logger.info(f"Successfully inserted {len(operations)} skills for URL ID {url_id}")
-
-                # Verify if skills were actually inserted
-                query = f"SELECT COUNT(*) FROM skills WHERE url_id = ?"
-                with self._execute_query(query, (url_id,)) as cursor:
-                    count = cursor.fetchone()[0]
-                    self.logger.info(f"Verification: {count} skills now exist for URL ID {url_id}")
-
-            except Exception as e:
-                self.logger.error(f"Error in transaction when inserting skills for URL ID {url_id}: {e}")
-                self.logger.error(f"Failed skills: {failed_skills}")
-                raise
-        else:
-            self.logger.warning(f"No valid skills to insert for URL ID {url_id}")
-
-    def insert_attributes_list(self, url_id: int, attributes: list) -> None:
+    def insert_attributes_list(self, job_advert_id: int, attributes: list) -> None:
         """
-        Insert multiple attributes for a URL.
+        Insert multiple attributes for a job advert.
 
         Args:
-            url_id: Associated URL ID.
+            job_advert_id: Associated job advert ID.
             attributes: List of attributes.
         """
         if not attributes:
             return
 
         for attribute in attributes:
-            self.insert_attribute(url_id, attribute)
+            self.insert_attribute(job_advert_id, attribute)
 
 
     def insert_contact_persons_list(self, url_id: int, contacts: list) -> None:
@@ -1302,77 +1215,76 @@ class RecruitmentDatabase:
             self.insert_contact_person(url_id, contact)
 
 
-    def insert_benefits_list(self, url_id: int, benefits: list) -> None:
+    def insert_benefits_list(self, job_advert_id: int, benefits: list) -> None:
         """
-        Insert multiple benefits for a URL.
+        Insert multiple benefits for a job advert.
 
         Args:
-            url_id: Associated URL ID.
+            job_advert_id: Associated job advert ID.
             benefits: List of benefits.
         """
         if not benefits:
             return
 
         for benefit in benefits:
-            self.insert_benefit(url_id, benefit)
+            self.insert_benefit(job_advert_id, benefit)
 
-    def insert_duties_list(self, url_id: int, duties: list) -> None:
+    def insert_duties_list(self, job_advert_id: int, duties: list) -> None:
         """
-        Insert multiple duties for a URL.
+        Insert multiple duties for a job advert.
 
         Args:
-            url_id: Associated URL ID.
+            job_advert_id: Associated job advert ID.
             duties: List of duties.
         """
         if not duties:
             return
 
         for duty in duties:
-            self.insert_duty(url_id, duty)
+            self.insert_duty(job_advert_id, duty)
 
-    def insert_recruitment_evidence_list(self, url_id: int, evidence_list: list) -> None:
+    def insert_recruitment_evidence_list(self, job_advert_id: int, evidence_list: list) -> None:
         """
-        Insert multiple evidence items for recruitment flagging.
+        Insert multiple recruitment evidence records for a job advert.
 
         Args:
-            url_id: Associated URL ID.
-            evidence_list: List of evidence items.
+            job_advert_id: Associated job advert ID.
+            evidence_list: List of evidence texts.
         """
         if not evidence_list:
             return
 
         for evidence in evidence_list:
-            self.insert_recruitment_evidence(url_id, evidence)
+            self.insert_recruitment_evidence(job_advert_id, evidence)
 
-    # Fix _create_qualifications_table to use consistent table name in comment
     def _create_qualifications_table(self) -> None:
         """Create the 'qualifications' table."""
         query = """
             CREATE TABLE IF NOT EXISTS qualifications (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url_id INTEGER NOT NULL,
+                job_advert_id INTEGER NOT NULL,
                 qualification TEXT NOT NULL,
-                UNIQUE (url_id, qualification),
-                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
+                UNIQUE (job_advert_id, qualification),
+                FOREIGN KEY (job_advert_id) REFERENCES job_adverts (id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """
         with self._execute_query(query):
             self.logger.info("Table 'qualifications' created or verified.")
 
 
-    def insert_qualifications_list(self, url_id: int, qualifications: list) -> None:
+    def insert_qualifications_list(self, job_advert_id: int, qualifications: list) -> None:
         """
-        Insert multiple qualifications for a URL.
+        Insert multiple qualifications for a job advert.
 
         Args:
-            url_id: Associated URL ID.
+            job_advert_id: Associated job advert ID.
             qualifications: List of qualifications.
         """
         if not qualifications:
             return
 
         for qualification in qualifications:
-            self.insert_qualification(url_id, qualification)
+            self.insert_qualification(job_advert_id, qualification)
 
 
     # Ensure that company-related methods have consistent naming
@@ -1732,12 +1644,13 @@ class RecruitmentDatabase:
             raise
 
     def _create_industry_table(self) -> None:
-        """Create the 'industry' table to store industry information."""
+        """Create the 'industry' table."""
         query = """
             CREATE TABLE IF NOT EXISTS industry (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 job_advert_id INTEGER NOT NULL,
                 industry_name TEXT NOT NULL,
+                UNIQUE (job_advert_id, industry_name),
                 FOREIGN KEY (job_advert_id) REFERENCES job_adverts (id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """
