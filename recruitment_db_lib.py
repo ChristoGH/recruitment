@@ -173,8 +173,8 @@ class RecruitmentDatabase:
         self._create_benefits_table()
         self._create_skills_table()
         self._create_attributes_table()
-        self._create_job_table()
         self._create_job_advert_table()
+        self._create_industry_table()
         self._create_links_table()
         self._create_emails_table()
         self._create_company_phone_numbers_table()
@@ -263,15 +263,22 @@ class RecruitmentDatabase:
             self.logger.info("Table 'company_phone' created or verified.")
 
     # Fix for _create_job_table method to use correct table references
-    def _create_job_table(self) -> None:
-        """Create the 'job_adverts' table with correct foreign key references."""
+    def _create_job_advert_table(self) -> None:
+        """Create the 'job_adverts' table as the central table that relates to URLs."""
         query = """
             CREATE TABLE IF NOT EXISTS job_adverts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url_id INTEGER NOT NULL,
-                company_id INTEGER, 
-                recruiter_id INTEGER,
                 title TEXT,
+                description TEXT,
+                salary TEXT,
+                duration TEXT,
+                start_date TEXT,
+                end_date TEXT,
+                posted_date TEXT,
+                application_deadline TEXT,
+                company_id INTEGER,
+                recruiter_id INTEGER,
                 FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE,
                 FOREIGN KEY (company_id) REFERENCES company (id) ON DELETE SET NULL ON UPDATE CASCADE,
                 FOREIGN KEY (recruiter_id) REFERENCES recruiter (id) ON DELETE SET NULL ON UPDATE CASCADE
@@ -410,11 +417,11 @@ class RecruitmentDatabase:
         query = """
             CREATE TABLE IF NOT EXISTS skills (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url_id INTEGER NOT NULL,
+                job_advert_id INTEGER NOT NULL,
                 skill TEXT NOT NULL,
                 experience TEXT,
-                UNIQUE (url_id, skill, experience),
-                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
+                UNIQUE (job_advert_id, skill, experience),
+                FOREIGN KEY (job_advert_id) REFERENCES job_adverts (id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """
         with self._execute_query(query):
@@ -442,10 +449,10 @@ class RecruitmentDatabase:
         query = """
             CREATE TABLE IF NOT EXISTS attributes (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
-                url_id INTEGER NOT NULL,
+                job_advert_id INTEGER NOT NULL,
                 attribute TEXT NOT NULL,
-                UNIQUE (url_id, attribute),
-                FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE
+                UNIQUE (job_advert_id, attribute),
+                FOREIGN KEY (job_advert_id) REFERENCES job_adverts (id) ON DELETE CASCADE ON UPDATE CASCADE
             )
         """
         with self._execute_query(query):
@@ -484,12 +491,12 @@ class RecruitmentDatabase:
             self.logger.info("Index 'idx_url_links_link_type' created or verified.")
 
     def _create_job_advert_table(self) -> None:
-        """Create the 'job_advert_forms' table to store job posting details."""
+        """Create the 'job_adverts' table as the central table that relates to URLs."""
         query = """
-            CREATE TABLE IF NOT EXISTS job_advert_forms (
+            CREATE TABLE IF NOT EXISTS job_adverts (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 url_id INTEGER NOT NULL,
-                job_advert_id INTEGER,
+                title TEXT,
                 description TEXT,
                 salary TEXT,
                 duration TEXT,
@@ -497,12 +504,15 @@ class RecruitmentDatabase:
                 end_date TEXT,
                 posted_date TEXT,
                 application_deadline TEXT,
+                company_id INTEGER,
+                recruiter_id INTEGER,
                 FOREIGN KEY (url_id) REFERENCES urls (id) ON DELETE CASCADE ON UPDATE CASCADE,
-                FOREIGN KEY (job_advert_id) REFERENCES job_adverts (id) ON DELETE SET NULL ON UPDATE CASCADE
+                FOREIGN KEY (company_id) REFERENCES company (id) ON DELETE SET NULL ON UPDATE CASCADE,
+                FOREIGN KEY (recruiter_id) REFERENCES recruiter (id) ON DELETE SET NULL ON UPDATE CASCADE
             )
         """
         with self._execute_query(query):
-            self.logger.info("Table 'job_advert_forms' created or verified.")
+            self.logger.info("Table 'job_adverts' created or verified.")
 
     def get_column_names(self, table_name: str) -> List[str]:
         """
@@ -1720,3 +1730,75 @@ class RecruitmentDatabase:
         except Exception as e:
             self.logger.error(f"Error updating job-company relations: {e}")
             raise
+
+    def _create_industry_table(self) -> None:
+        """Create the 'industry' table to store industry information."""
+        query = """
+            CREATE TABLE IF NOT EXISTS industry (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                job_advert_id INTEGER NOT NULL,
+                industry_name TEXT NOT NULL,
+                FOREIGN KEY (job_advert_id) REFERENCES job_adverts (id) ON DELETE CASCADE ON UPDATE CASCADE
+            )
+        """
+        with self._execute_query(query):
+            self.logger.info("Table 'industry' created or verified.")
+
+    def insert_industry(self, job_advert_id: int, industry_name: str) -> int:
+        """Insert a new industry record for a job advert.
+        
+        Args:
+            job_advert_id: The ID of the job advert
+            industry_name: The name of the industry
+            
+        Returns:
+            The ID of the newly inserted industry record
+        """
+        query = """
+            INSERT INTO industry (job_advert_id, industry_name)
+            VALUES (?, ?)
+        """
+        try:
+            with self._execute_query(query, (job_advert_id, industry_name)) as cursor:
+                return cursor.lastrowid
+        except Exception as e:
+            self.logger.error(f"Error inserting industry data: {e}")
+            raise DatabaseError(f"Failed to insert industry data: {e}")
+
+    def get_industries_for_job_advert(self, job_advert_id: int) -> List[str]:
+        """Get all industries associated with a job advert.
+        
+        Args:
+            job_advert_id: The ID of the job advert
+            
+        Returns:
+            A list of industry names
+        """
+        query = """
+            SELECT industry_name
+            FROM industry
+            WHERE job_advert_id = ?
+        """
+        try:
+            with self._execute_query(query, (job_advert_id,)) as cursor:
+                return [row[0] for row in cursor.fetchall()]
+        except Exception as e:
+            self.logger.error(f"Error retrieving industries: {e}")
+            raise DatabaseError(f"Failed to retrieve industries: {e}")
+
+    def delete_industries_for_job_advert(self, job_advert_id: int) -> None:
+        """Delete all industry records for a job advert.
+        
+        Args:
+            job_advert_id: The ID of the job advert
+        """
+        query = """
+            DELETE FROM industry
+            WHERE job_advert_id = ?
+        """
+        try:
+            with self._execute_query(query, (job_advert_id,)):
+                self.logger.info(f"Deleted industry records for job advert {job_advert_id}")
+        except Exception as e:
+            self.logger.error(f"Error deleting industry records: {e}")
+            raise DatabaseError(f"Failed to delete industry records: {e}")

@@ -152,6 +152,19 @@ class CompanyResponse(BaseModel):
     company: Optional[str] = Field(None, min_length=2, max_length=200)
 
 
+class IndustryResponse(BaseModel):
+    industry: Optional[str] = Field(None, min_length=2, max_length=200)
+
+    @field_validator('industry')
+    @classmethod
+    def validate_industry(cls, v):
+        if v is not None:
+            v = v.strip()
+            if len(v) < 2:
+                return None
+        return v
+
+
 class BenefitsResponse(BaseModel):
     benefits: Optional[List[str]] = None
 

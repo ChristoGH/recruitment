@@ -17,7 +17,7 @@ import tldextract
 from googlesearch import search
 from functools import lru_cache
 from pydantic import BaseModel
-from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends
+from fastapi import FastAPI, BackgroundTasks, HTTPException, Depends, status
 from fastapi.middleware.cors import CORSMiddleware
 import pika
 import asyncio
@@ -119,7 +119,7 @@ def get_or_create_rabbitmq_connection():
         rabbitmq_channel = None
         raise
 
-def publish_urls_to_queue(urls: List[str], search_id: str):
+async def publish_urls_to_queue(urls: List[str], search_id: str):
     """Publish URLs to RabbitMQ queue."""
     max_retries = 3
     retry_count = 0
@@ -154,7 +154,7 @@ def publish_urls_to_queue(urls: List[str], search_id: str):
             logger.error(f"Error publishing to RabbitMQ queue (attempt {retry_count + 1}): {e}")
             retry_count += 1
             if retry_count < max_retries:
-                time.sleep(1)  # Wait before retrying
+                await asyncio.sleep(1)  # Wait before retrying
                 continue
             raise
 
@@ -335,7 +335,7 @@ async def periodic_search(background_tasks: BackgroundTasks, search_config: dict
                 search_results[search_id]["status"] = "failed"
                 search_results[search_id]["error"] = f"Queue publishing error: {str(e)}"
                 raise HTTPException(
-                    status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                    status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                     detail=f"Failed to publish URLs to queue: {str(e)}"
                 )
                 
@@ -344,7 +344,7 @@ async def periodic_search(background_tasks: BackgroundTasks, search_config: dict
             search_results[search_id]["status"] = "failed"
             search_results[search_id]["error"] = f"Search error: {str(e)}"
             raise HTTPException(
-                status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+                status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
                 detail=f"Search failed: {str(e)}"
             )
             
@@ -361,7 +361,7 @@ async def periodic_search(background_tasks: BackgroundTasks, search_config: dict
     except Exception as e:
         logger.error(f"Unexpected error in periodic_search: {str(e)}")
         raise HTTPException(
-            status_code=HTTP_500_INTERNAL_SERVER_ERROR,
+            status_code=status.HTTP_500_INTERNAL_SERVER_ERROR,
             detail=f"Unexpected error: {str(e)}"
         )
 

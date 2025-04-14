@@ -9,7 +9,7 @@ from recruitment_models import (
     ContactPersonResponse, SkillExperienceResponse, AttributesResponse,
     AgencyResponse, CompanyResponse, BenefitsResponse, DutiesResponse,
     QualificationsResponse, LinkResponse, EmailResponse, CompanyPhoneNumberResponse,
-    JobAdvertResponse
+    JobAdvertResponse, IndustryResponse
 )
 
 # Map prompt keys to their corresponding model classes
@@ -27,6 +27,7 @@ PROMPT_MODEL_MAP: Dict[str, Type[BaseModel]] = {
     "attributes_prompt": AttributesResponse,
     "location_prompt": LocationResponse,
     "jobadvert_prompt": JobAdvertResponse,
+    "industry_prompt": IndustryResponse,
 
     # Add the missing mappings
     "duties_prompt": DutiesResponse,

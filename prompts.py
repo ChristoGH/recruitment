@@ -53,17 +53,24 @@ LIST_PROMPTS = {
 # Prompts that return single values (non-lists)
 NON_LIST_PROMPTS = {
     "company_prompt": (
-        "Assistant, please indicate if it can be said with certainty who the hiring company is?"
-        "Return your answer in the following RAW JSON format with NO backticks OR code blocks:\n"
+        "Assistant, please extract the name of the company advertising this job from this article, if any. "
+        "Return your answer in the following JSON format:\n"
         "{\n"
-        '  "company": "name" or null\n'
+        '  "company": "company name" or null\n'
         "}"
     ),
     "agency_prompt": (
-        "Assistant, please indicate if it can be said with certainty who recruitment agency acting ON BEHALF of the hiring company is?"
-        "Return your answer in the following RAW JSON format with NO backticks OR code blocks:\n"
+        "Assistant, please extract the name of the recruitment agency advertising this job from this article, if any. "
+        "Return your answer in the following JSON format:\n"
         "{\n"
-        '  "agency": "name" or null\n'
+        '  "agency": "agency name" or null\n'
+        "}"
+    ),
+    "industry_prompt": (
+        "Assistant, please extract the industry or sector this job belongs to from this article, if any. "
+        "Return your answer in the following JSON format:\n"
+        "{\n"
+        '  "industry": "industry name" or null\n'
         "}"
     ),
     "job_prompt": (
@@ -72,13 +79,6 @@ NON_LIST_PROMPTS = {
         "Return your answer in the following JSON format:\n"
         "{\n"
         '  "title": "name" or null\n'
-        "}"
-    ),
-        "industry_prompt": (
-        "Assistant, please extract the name of the industry in which this job is placed. "
-        "Return your answer in the following JSON format:\n"
-        "{\n"
-        '  "industry": "name" or null\n'
         "}"
     ),
     "company_phone_number_prompt": (
