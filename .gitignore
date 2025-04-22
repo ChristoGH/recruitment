@@ -94,3 +94,4 @@ application/casedispatcher/log/
 *.db
 recruitment.db.backup_*
 recruitment.code-workspace
+data/recruitment.db
