@@ -23,9 +23,12 @@ dependencies = [
     "newspaper3k>=0.2.8",
     "pandas>=2.2.3",
     "pip>=25.0.1",
+    "plotly>=6.0.1",
     "pydantic[email]>=2.10.6",
     "readability-lxml>=0.8.1",
     "selenium>=4.29.0",
+    "statsmodels>=0.14.4",
+    "streamlit>=1.44.1",
     "tldextract>=5.1.3",
 ]
 

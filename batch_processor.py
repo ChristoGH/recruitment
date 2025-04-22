@@ -3,7 +3,7 @@
 import logging
 from typing import Dict, Any, List, Optional, Tuple, Union
 import json
-from recruitment_db_lib import DatabaseError
+from recruitment_db import DatabaseError
 
 from logging_config import setup_logging
 
@@ -185,6 +185,8 @@ def process_all_prompt_responses(db, url_id: int, prompt_responses: Dict[str, An
                     process_qualifications(db, url_id, response)
                 elif prompt_type == "duties_prompt":
                     process_duties(db, url_id, response)
+                elif prompt_type == "industry_prompt":
+                    process_industry(db, url_id, response)
                 else:
                     logger.warning(f"Unknown prompt type: {prompt_type}")
                     results["failed"] += 1
@@ -316,19 +318,19 @@ def extract_job_data_from_responses(prompt_responses: Dict[str, Any]) -> Dict[st
 # Individual processing functions for non-transaction mode
 
 def process_recruitment(db, url_id: int, response: Any) -> None:
-    """Process recruitment flag and evidence."""
+    """Process recruitment flag and evidence following new schema."""
     data = _ensure_dict(response)
     answer = data.get("answer")
     if answer == "yes":
-        # Update recruitment flag to 1 (is recruitment)
+        # Update recruitment flag
         db.update_field_by_id(url_id, "recruitment_flag", 1)
-
-        # Process evidence if available
+        
+        # Process evidence
         evidence = data.get("evidence")
         if evidence and isinstance(evidence, list):
-            db.insert_recruitment_evidence_list(url_id, evidence)
+            for evidence_text in evidence:
+                db.insert_recruitment_evidence(url_id, evidence_text)
     elif answer == "no":
-        # Update recruitment flag to 0 (not recruitment)
         db.update_field_by_id(url_id, "recruitment_flag", 0)
 
 
@@ -681,3 +683,29 @@ def _ensure_dict(response: Any) -> Dict[str, Any]:
     else:
         # Unknown type, return empty dict
         return {}
+
+
+def process_industry(db, url_id: int, response: Dict[str, Any]) -> None:
+    """
+    Process industry data from the industry prompt response.
+    
+    Args:
+        db: Database connection
+        url_id: The URL ID
+        response: The industry prompt response
+    """
+    try:
+        industry_name = response.get("industry")
+        if industry_name:
+            # Get the job ID for this URL
+            job_id = db.get_job_id_by_url_id(url_id)
+            if job_id:
+                # Insert the industry and link it to the job
+                industry_id = db.insert_industry(industry_name)
+                db.link_job_industry(job_id, industry_id)
+                logger.info(f"Processed industry '{industry_name}' for job {job_id}")
+            else:
+                logger.warning(f"No job found for URL ID {url_id}")
+    except Exception as e:
+        logger.error(f"Error processing industry: {e}")
+        raise

@@ -3,7 +3,8 @@
 Direct skills insertion test
 """
 import sqlite3
-from recruitment_db_lib import RecruitmentDatabase
+from typing import Dict, List, Any, Optional
+from recruitment_db import RecruitmentDatabase
 
 # Create database instance
 db = RecruitmentDatabase()

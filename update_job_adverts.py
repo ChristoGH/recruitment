@@ -10,7 +10,8 @@ not just URL associations.
 import os
 import sys
 import logging
-from recruitment_db_lib import RecruitmentDatabase
+from typing import Dict, List, Any, Optional
+from recruitment_db import RecruitmentDatabase
 from logging_config import setup_logging
 
 # Set up logging

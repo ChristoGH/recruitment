@@ -1,32 +1,46 @@
--- Drop existing tables if they exist
+-- Drop all tables in reverse order of creation
+DROP TABLE IF EXISTS url_processing_status;
+DROP TABLE IF EXISTS agency_emails;
+DROP TABLE IF EXISTS company_emails;
+DROP TABLE IF EXISTS agency_phones;
+DROP TABLE IF EXISTS company_phones;
+DROP TABLE IF EXISTS job_locations;
+DROP TABLE IF EXISTS job_duties;
 DROP TABLE IF EXISTS job_agencies;
 DROP TABLE IF EXISTS job_companies;
+DROP TABLE IF EXISTS job_industries;
+DROP TABLE IF EXISTS job_attributes;
 DROP TABLE IF EXISTS job_qualifications;
 DROP TABLE IF EXISTS job_skills;
 DROP TABLE IF EXISTS job_urls;
-DROP TABLE IF EXISTS agencies;
-DROP TABLE IF EXISTS companies;
+DROP TABLE IF EXISTS benefits;
+DROP TABLE IF EXISTS emails;
+DROP TABLE IF EXISTS phones;
+DROP TABLE IF EXISTS locations;
+DROP TABLE IF EXISTS duties;
+DROP TABLE IF EXISTS industries;
+DROP TABLE IF EXISTS attributes;
 DROP TABLE IF EXISTS qualifications;
 DROP TABLE IF EXISTS skills;
+DROP TABLE IF EXISTS adverts;
 DROP TABLE IF EXISTS jobs;
+DROP TABLE IF EXISTS companies;
+DROP TABLE IF EXISTS agencies;
 DROP TABLE IF EXISTS urls;
 
--- Create new database
-ATTACH DATABASE 'databases/recruitment_new.db' AS new_db;
-
 -- Create core tables
-CREATE TABLE IF NOT EXISTS agencies (
-    id INTEGER PRIMARY KEY,
-    name TEXT NOT NULL UNIQUE,
-    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
-);
-
 CREATE TABLE IF NOT EXISTS urls (
     id INTEGER PRIMARY KEY,
     url TEXT UNIQUE NOT NULL,
     domain_name TEXT,
     source TEXT,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS agencies (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -83,9 +97,25 @@ CREATE TABLE IF NOT EXISTS attributes (
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
 
+CREATE TABLE IF NOT EXISTS industries (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
 CREATE TABLE IF NOT EXISTS duties (
     id INTEGER PRIMARY KEY,
     description TEXT NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+
+CREATE TABLE IF NOT EXISTS locations (
+    id INTEGER PRIMARY KEY,
+    country TEXT NOT NULL,
+    province TEXT,
+    city TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
 );
@@ -151,6 +181,15 @@ CREATE TABLE IF NOT EXISTS job_attributes (
     PRIMARY KEY (job_id, attribute_id),
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (attribute_id) REFERENCES attributes(id) ON DELETE CASCADE
+);
+
+CREATE TABLE IF NOT EXISTS job_industries (
+    job_id INTEGER NOT NULL,
+    industry_id INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (job_id, industry_id),
+    FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+    FOREIGN KEY (industry_id) REFERENCES industries(id) ON DELETE CASCADE
 );
 
 CREATE TABLE IF NOT EXISTS job_companies (

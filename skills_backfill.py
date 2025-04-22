@@ -18,7 +18,8 @@ Options:
 import argparse
 import logging
 import sys
-from recruitment_db_lib import RecruitmentDatabase
+from typing import Dict, List, Any, Optional
+from recruitment_db import RecruitmentDatabase
 from recruitment_models import transform_skills_response, SkillExperience
 
 # Setup logging

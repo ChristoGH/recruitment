@@ -31,7 +31,7 @@ from dotenv import load_dotenv
 from recruitment_models import transform_skills_response
 from get_urls_from_csvs import get_unique_urls_from_csvs
 from prompts import COMPLEX_PROMPTS, LIST_PROMPTS, NON_LIST_PROMPTS
-from recruitment_db_lib import DatabaseError
+from recruitment_db import DatabaseError
 from recruitment_models import (AgencyResponse, AttributesResponse, BenefitsResponse,
                               CompanyResponse, ConfirmResponse, ContactPersonResponse,
                               EmailResponse, JobAdvertResponse, JobResponse,

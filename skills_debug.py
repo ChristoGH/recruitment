@@ -20,15 +20,14 @@ from llama_index.core import VectorStoreIndex
 from llama_index.core.memory import ChatMemoryBuffer
 from llama_index.llms.openai import OpenAI
 from dotenv import load_dotenv
+from typing import Dict, List, Any, Optional
+from recruitment_db import RecruitmentDatabase
 
 # Import the web crawler
 from web_crawler_lib import crawl_website_sync
 
 # Import the prompts
 from prompts import COMPLEX_PROMPTS
-
-# Import the database
-from recruitment_db_lib import RecruitmentDatabase
 
 # Configure logging
 logging.basicConfig(

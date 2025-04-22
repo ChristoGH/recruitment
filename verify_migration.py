@@ -1,149 +1,186 @@
+#!/usr/bin/env python3
+"""
+Verification script to check the success of the database migration
+from url_id to job_advert_id.
+"""
+
+import os
 import sqlite3
 import logging
 from datetime import datetime
+from pathlib import Path
+from dotenv import load_dotenv
 
-# Set up logging
+# Load environment variables
+load_dotenv()
+
+# Configure logging
 logging.basicConfig(
     level=logging.INFO,
-    format='%(asctime)s - %(levelname)s - %(message)s'
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.FileHandler('verification.log'),
+        logging.StreamHandler()
+    ]
 )
 logger = logging.getLogger(__name__)
 
-def connect_to_db(db_path):
-    """Create a connection to the database."""
-    try:
-        conn = sqlite3.connect(db_path)
-        conn.row_factory = sqlite3.Row
-        return conn
-    except sqlite3.Error as e:
-        logger.error(f"Error connecting to database {db_path}: {e}")
-        raise
-
-def verify_table_count(old_conn, new_conn, table_name, old_table_name=None):
-    """Verify that the number of records in a table matches between old and new databases."""
-    if old_table_name is None:
-        old_table_name = table_name
-
-    try:
-        old_cursor = old_conn.cursor()
-        new_cursor = new_conn.cursor()
-
-        # Get counts from both databases
-        old_cursor.execute(f"SELECT COUNT(*) as count FROM {old_table_name}")
-        old_count = old_cursor.fetchone()['count']
-
-        new_cursor.execute(f"SELECT COUNT(*) as count FROM {table_name}")
-        new_count = new_cursor.fetchone()['count']
-
-        # Log the results
-        if old_count == new_count:
-            logger.info(f"✓ {table_name}: {old_count} records match")
-            return True
-        else:
-            logger.warning(f"✗ {table_name}: {old_count} records in old DB, {new_count} records in new DB")
-            return False
-    except sqlite3.Error as e:
-        logger.error(f"Error verifying {table_name}: {e}")
-        return False
-
-def verify_relationships(old_conn, new_conn, relationship_table, old_table_name=None):
-    """Verify that the relationships between tables are preserved."""
-    if old_table_name is None:
-        old_table_name = relationship_table
-
-    try:
-        old_cursor = old_conn.cursor()
-        new_cursor = new_conn.cursor()
-
-        # Get counts from both databases
-        old_cursor.execute(f"SELECT COUNT(*) as count FROM {old_table_name}")
-        old_count = old_cursor.fetchone()['count']
-
-        new_cursor.execute(f"SELECT COUNT(*) as count FROM {relationship_table}")
-        new_count = new_cursor.fetchone()['count']
-
-        # Log the results
-        if old_count == new_count:
-            logger.info(f"✓ {relationship_table}: {old_count} relationships match")
-            return True
-        else:
-            logger.warning(f"✗ {relationship_table}: {old_count} relationships in old DB, {new_count} in new DB")
-            return False
-    except sqlite3.Error as e:
-        logger.error(f"Error verifying {relationship_table}: {e}")
-        return False
-
-def verify_data_integrity(old_conn, new_conn):
-    """Verify the integrity of the migrated data."""
-    logger.info("Verifying data integrity...")
+class MigrationVerifier:
+    """Verifies the success of the database migration."""
     
-    # Verify core tables
-    core_tables = [
-        ('urls', 'urls'),
-        ('companies', 'company'),
-        ('agencies', 'agency'),
-        ('skills', 'skills'),
-        ('qualifications', 'qualifications'),
-        ('jobs', 'job_adverts')
-    ]
+    def __init__(self, db_path: str = None):
+        """Initialize the verifier."""
+        self.db_path = db_path or os.getenv("RECRUITMENT_PATH")
+        if not self.db_path:
+            raise ValueError("Database path not set. Check RECRUITMENT_PATH environment variable.")
+        
+        self.conn = None
+        self.cursor = None
+        self.tables_to_verify = [
+            'company',
+            'company_address',
+            'company_email',
+            'company_phone',
+            'agency',
+            'links',
+            'email',
+            'contact_person',
+            'duties',
+            'benefits',
+            'location'
+        ]
 
-    # Verify relationship tables
-    relationship_tables = [
-        ('job_urls', 'job_advert_forms'),
-        ('job_skills', 'job_advert_forms'),
-        ('job_qualifications', 'job_advert_forms'),
-        ('job_companies', 'job_advert_forms'),
-        ('job_agencies', 'job_advert_forms')
-    ]
+    def connect(self):
+        """Establish connection to the database."""
+        try:
+            self.conn = sqlite3.connect(self.db_path)
+            self.cursor = self.conn.cursor()
+            self.cursor.execute("PRAGMA foreign_keys = ON;")
+            logger.info("Connected to database successfully")
+        except sqlite3.Error as e:
+            logger.error(f"Error connecting to database: {e}")
+            raise
 
-    # Check core tables
-    core_results = []
-    for new_table, old_table in core_tables:
-        result = verify_table_count(old_conn, new_conn, new_table, old_table)
-        core_results.append(result)
+    def disconnect(self):
+        """Close the database connection."""
+        if self.conn:
+            self.conn.close()
+            logger.info("Disconnected from database")
 
-    # Check relationship tables
-    relationship_results = []
-    for new_table, old_table in relationship_tables:
-        result = verify_relationships(old_conn, new_conn, new_table, old_table)
-        relationship_results.append(result)
+    def verify_table_schema(self, table_name: str):
+        """Verify that the table has the correct schema after migration."""
+        try:
+            # Check if table exists
+            self.cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{table_name}'")
+            if not self.cursor.fetchone():
+                logger.error(f"Table {table_name} does not exist!")
+                return False
 
-    # Calculate overall success rate
-    total_checks = len(core_results) + len(relationship_results)
-    successful_checks = sum(core_results) + sum(relationship_results)
-    success_rate = (successful_checks / total_checks) * 100
+            # Get table schema
+            self.cursor.execute(f"PRAGMA table_info({table_name})")
+            columns = {col[1]: col for col in self.cursor.fetchall()}
 
-    logger.info(f"\nVerification Summary:")
-    logger.info(f"Total checks: {total_checks}")
-    logger.info(f"Successful checks: {successful_checks}")
-    logger.info(f"Success rate: {success_rate:.2f}%")
+            # Verify required columns
+            if 'job_advert_id' not in columns:
+                logger.error(f"Table {table_name} is missing job_advert_id column!")
+                return False
 
-    return success_rate == 100
+            if 'url_id' in columns:
+                logger.error(f"Table {table_name} still has url_id column!")
+                return False
 
-def main():
-    """Main function to handle the verification process."""
-    try:
-        # Connect to databases
-        old_conn = connect_to_db('databases/recruitment.db')
-        new_conn = connect_to_db('databases/recruitment_new.db')
+            # Verify foreign key constraint
+            self.cursor.execute(f"PRAGMA foreign_key_list({table_name})")
+            foreign_keys = self.cursor.fetchall()
+            has_job_advert_fk = any(fk[2] == 'job_adverts' and fk[3] == 'id' and fk[4] == 'job_advert_id' for fk in foreign_keys)
+            
+            if not has_job_advert_fk:
+                logger.error(f"Table {table_name} is missing foreign key constraint on job_advert_id!")
+                return False
 
-        # Verify data integrity
-        is_valid = verify_data_integrity(old_conn, new_conn)
+            logger.info(f"Table {table_name} schema verification passed")
+            return True
 
-        if is_valid:
-            logger.info("\n✓ Migration verification completed successfully")
-        else:
-            logger.warning("\n⚠ Migration verification completed with warnings")
+        except sqlite3.Error as e:
+            logger.error(f"Error verifying schema for table {table_name}: {e}")
+            return False
 
-    except Exception as e:
-        logger.error(f"Verification failed: {e}")
-        raise
-    finally:
-        # Close connections
-        if old_conn:
-            old_conn.close()
-        if new_conn:
-            new_conn.close()
+    def verify_table_data(self, table_name: str):
+        """Verify that the table data was migrated correctly."""
+        try:
+            # Count total records
+            self.cursor.execute(f"SELECT COUNT(*) FROM {table_name}")
+            total_count = self.cursor.fetchone()[0]
+
+            # Count records with valid job_advert_id (foreign key constraint should ensure this)
+            self.cursor.execute(f"""
+                SELECT COUNT(*) FROM {table_name} t
+                INNER JOIN job_adverts ja ON t.job_advert_id = ja.id
+            """)
+            valid_count = self.cursor.fetchone()[0]
+
+            # They should be equal due to foreign key constraint
+            if total_count != valid_count:
+                logger.error(f"Table {table_name} has {total_count} records but only {valid_count} have valid job_advert_id!")
+                return False
+
+            # Check for any NULL job_advert_id
+            self.cursor.execute(f"SELECT COUNT(*) FROM {table_name} WHERE job_advert_id IS NULL")
+            null_count = self.cursor.fetchone()[0]
+            if null_count > 0:
+                logger.error(f"Table {table_name} has {null_count} records with NULL job_advert_id!")
+                return False
+
+            # Check for invalid records table
+            invalid_table = f"{table_name}_invalid"
+            self.cursor.execute(f"SELECT name FROM sqlite_master WHERE type='table' AND name='{invalid_table}'")
+            if self.cursor.fetchone():
+                self.cursor.execute(f"SELECT COUNT(*) FROM {invalid_table}")
+                invalid_count = self.cursor.fetchone()[0]
+                logger.info(f"Found {invalid_count} invalid records in {invalid_table}")
+
+            logger.info(f"Table {table_name} data verification passed: {total_count} records")
+            return True
+
+        except sqlite3.Error as e:
+            logger.error(f"Error verifying data for table {table_name}: {e}")
+            return False
+
+    def verify_migration(self):
+        """Verify the entire migration."""
+        try:
+            self.connect()
+            
+            all_passed = True
+            for table in self.tables_to_verify:
+                logger.info(f"\nVerifying table: {table}")
+                schema_ok = self.verify_table_schema(table)
+                data_ok = self.verify_table_data(table)
+                
+                if not (schema_ok and data_ok):
+                    all_passed = False
+                    logger.error(f"Verification failed for table: {table}")
+                else:
+                    logger.info(f"Verification passed for table: {table}")
+
+            if all_passed:
+                logger.info("\nAll tables verified successfully!")
+            else:
+                logger.error("\nVerification failed for some tables!")
+
+            return all_passed
+
+        except Exception as e:
+            logger.error(f"Verification failed: {e}")
+            return False
+        finally:
+            self.disconnect()
 
 if __name__ == "__main__":
-    main() 
+    try:
+        verifier = MigrationVerifier()
+        success = verifier.verify_migration()
+        exit(0 if success else 1)
+    except Exception as e:
+        logger.error(f"Verification script failed: {e}")
+        exit(1) 

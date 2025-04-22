@@ -38,8 +38,7 @@ services:
       - RABBITMQ_PORT=5672
       - RABBITMQ_USER=guest
       - RABBITMQ_PASSWORD=guest
-      - RECRUITMENT_NEW_PATH=/data/recruitment_new.db
-      - RECRUITMENT_PATH=/data/recruitment.db
+      - RECRUITMENT_PATH=/app/databases/recruitment.db
     extra_hosts:
       - "host.docker.internal:host-gateway"
     depends_on:
@@ -49,7 +48,7 @@ services:
       - recruitment_network
     volumes:
       - ./logs:/app/logs
-      - ./data:/data
+      - ./databases:/app/databases
     healthcheck:
       test: ["CMD", "curl", "-f", "http://localhost:8001/health"]
       interval: 30s
