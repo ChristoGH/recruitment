@@ -25,6 +25,9 @@ import random
 import time
 import os
 from datetime import datetime
+import asyncio
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from bs4 import BeautifulSoup
 
 logger = setup_logging("streamlit")
 
@@ -282,6 +285,85 @@ def get_url_from_session_state() -> str:
     """Get the URL from session state."""
     return st.session_state['input_url']
 
+async def extract_text_with_crawl4ai(url: str) -> Tuple[bool, str, Optional[str]]:
+    """
+    Extract text from a URL using crawl4ai's AsyncWebCrawler.
+    
+    Args:
+        url: The URL to extract text from
+        
+    Returns:
+        Tuple containing:
+        - Boolean indicating success
+        - Extracted text content if successful, empty string otherwise
+        - Error message if unsuccessful, None otherwise
+    """
+    try:
+        # 1. Browser config - only use supported parameters
+        browser_cfg = BrowserConfig(
+            browser_type="firefox",
+            headless=False,
+            verbose=True,
+            viewport_width=1920,
+            viewport_height=1080
+        )
+
+        # 2. Use a simple configuration without a specific extraction strategy
+        run_cfg = CrawlerRunConfig(
+            cache_mode=CacheMode.BYPASS,
+            word_count_threshold=1  # Very low threshold to capture all content
+        )
+        
+        async with AsyncWebCrawler(config=browser_cfg) as crawler:
+            logger.info(f"Extracting text from {url}")
+            try:
+                result = await crawler.arun(url=url, config=run_cfg)
+                
+                if result.success:
+                    logger.info("Extraction succeeded!")
+                    logger.info(f"Cleaned HTML length: {len(result.cleaned_html)}")
+                    
+                    # Use BeautifulSoup to extract text from the cleaned HTML
+                    soup = BeautifulSoup(result.cleaned_html, 'html.parser')
+                    
+                    # For job posting pages, we need to ensure we capture all content
+                    # Remove any script and style elements that might interfere with text extraction
+                    for script in soup(["script", "style"]):
+                        script.extract()
+                    
+                    # Extract text from the body with better formatting
+                    text_content = soup.get_text(separator='\n', strip=True)
+                    
+                    # Clean up the text by removing excessive newlines
+                    text_content = '\n'.join(line.strip() for line in text_content.split('\n') if line.strip())
+                    
+                    # Save the extracted content to a file for debugging
+                    with open("extracted_text_debug.txt", "w", encoding="utf-8") as f:
+                        f.write(text_content)
+                    
+                    return True, text_content, None
+                else:
+                    error_msg = f"Extraction error: {result.error_message}"
+                    logger.error(error_msg)
+                    return False, "", error_msg
+            except Exception as e:
+                # Check for specific connection errors
+                error_str = str(e).lower()
+                if "connection" in error_str or "timeout" in error_str or "refused" in error_str:
+                    error_msg = f"Connection error: Unable to connect to the server. The website might be down or the URL might be incorrect. Error: {str(e)}"
+                elif "dns" in error_str:
+                    error_msg = f"DNS error: Unable to resolve the domain name. The website might be down or the URL might be incorrect. Error: {str(e)}"
+                else:
+                    error_msg = f"Error during extraction: {str(e)}"
+                
+                logger.error(error_msg, exc_info=True)
+                return False, "", error_msg
+                
+    except Exception as e:
+        error_msg = f"Error during text extraction: {str(e)}"
+        logger.error(error_msg, exc_info=True)
+        return False, "", error_msg
+
 # Verify recruitment
 def verify_recruitment(url: str, chat_engine) -> Tuple[Dict[str, Any], List[str]]:
     """Verifies if a URL contains a recruitment advertisement."""
@@ -444,21 +526,78 @@ def main()-> None:
         # Add your specific code here that should run only when the URL changes
         # For example, you might want to automatically scrape the content
         try:
-            crawl_result = crawl_website_sync(
-                url=input_url,
-                excluded_tags=['form', 'header'],
-                verbose=True
-            )
-            if not crawl_result.success:
-                logger.warning(f"Failed to extract content from URL: {input_url}")
-                st.error(f"Failed to extract content: {crawl_result.error_message}")
-            else:    
-                st.session_state['text'] = crawl_result.markdown[:min(5000, len(crawl_result.markdown))]
-                st.write("Content automatically scraped!")
+            if use_alternative_method:
+                # Use the alternative crawl4ai method
+                st.write("Using alternative extraction method (crawl4ai)...")
+                success, text_content, error_message = asyncio.run(extract_text_with_crawl4ai(input_url))
+                
+                if success:
+                    # Store the full content without truncation
+                    st.session_state['text'] = text_content
+                    st.write("Content automatically scraped with alternative method!")
+                else:
+                    st.error(f"Failed to extract content with alternative method: {error_message}")
+                    
+                    # Provide troubleshooting tips for connection errors
+                    if "connection" in error_message.lower() or "dns" in error_message.lower():
+                        st.warning("""
+                        **Troubleshooting tips:**
+                        - Check if the URL is correct
+                        - Verify that the job posting is still active
+                        - Try accessing the URL in a different browser
+                        - Check your network connection
+                        - If you're behind a corporate firewall, it might be blocking access
+                        """)
+            else:
+                # First try with the existing crawl_website_sync method
+                crawl_result = crawl_website_sync(
+                    url=input_url,
+                    excluded_tags=['form', 'header'],
+                    verbose=True
+                )
+                if not crawl_result.success:
+                    logger.warning(f"Failed to extract content with crawl_website_sync: {input_url}")
+                    st.warning(f"Failed to extract content with primary method: {crawl_result.error_message}")
+                    
+                    # Try with the new crawl4ai method as a fallback
+                    st.write("Trying alternative extraction method...")
+                    success, text_content, error_message = asyncio.run(extract_text_with_crawl4ai(input_url))
+                    
+                    if success:
+                        # Store the full content without truncation
+                        st.session_state['text'] = text_content
+                        st.write("Content automatically scraped with alternative method!")
+                    else:
+                        st.error(f"Failed to extract content with alternative method: {error_message}")
+                        
+                        # Provide troubleshooting tips for connection errors
+                        if "connection" in error_message.lower() or "dns" in error_message.lower():
+                            st.warning("""
+                            **Troubleshooting tips:**
+                            - Check if the URL is correct
+                            - Verify that the job posting is still active
+                            - Try accessing the URL in a different browser
+                            - Check your network connection
+                            - If you're behind a corporate firewall, it might be blocking access
+                            """)
+                else:    
+                    # Store the full content without truncation
+                    st.session_state['text'] = crawl_result.markdown
+                    st.write("Content automatically scraped!")
                 
         except Exception as e:
             logger.error(f"Crawler exception for URL {input_url}: {e}", exc_info=True)
             st.error(f"Crawler exception: {str(e)}")
+            
+            # Provide troubleshooting tips for general exceptions
+            st.warning("""
+            **Troubleshooting tips:**
+            - Check if the URL is correct
+            - Verify that the job posting is still active
+            - Try accessing the URL in a different browser
+            - Check your network connection
+            - If you're behind a corporate firewall, it might be blocking access
+            """)
             
     # Add a multi-select box for prompt names in the sidebar
     st.sidebar.markdown("### Select Prompts")
@@ -478,6 +617,13 @@ def main()-> None:
         st.sidebar.markdown("**Selected prompts:**")
         for prompt in selected_prompts:
             st.sidebar.markdown(f"- {prompt}")
+    
+    # Add a toggle for extraction method
+    use_alternative_method = st.sidebar.checkbox(
+        "Use alternative extraction method (crawl4ai)",
+        value=False,
+        help="Toggle to use the alternative text extraction method from crawl4ai"
+    )
     
     if st.sidebar.button(label="Initialize LLM", key="init_llm_button"):
         # Add your scraping logic here
@@ -512,21 +658,84 @@ def main()-> None:
         if input_url:
             st.write(f"Processing URL: {input_url}")
             try:
-                crawl_result = crawl_website_sync(
-                    url=input_url,
-                    excluded_tags=['form', 'header'],
-                    verbose=True
-                )
-                if not crawl_result.success:
-                    logger.warning(f"Failed to extract content from URL: {input_url}")
-                    st.error(f"Failed to extract content: {crawl_result.error_message}")
-                else:    
-                    st.session_state['text'] = crawl_result.markdown[:min(5000, len(crawl_result.markdown))]
-                    st.markdown(st.session_state['text'])
+                if use_alternative_method:
+                    # Use the alternative crawl4ai method
+                    st.write("Using alternative extraction method (crawl4ai)...")
+                    success, text_content, error_message = asyncio.run(extract_text_with_crawl4ai(input_url))
+                    
+                    if success:
+                        # Store the full content without truncation
+                        st.session_state['text'] = text_content
+                        st.write(f"Content length: {len(text_content)} characters")
+                        st.write("Content preview:")
+                        st.text_area("Content", value=st.session_state['text'], height=400, key="scrape_preview_area")
+                    else:
+                        st.error(f"Failed to extract content with alternative method: {error_message}")
+                        
+                        # Provide troubleshooting tips for connection errors
+                        if "connection" in error_message.lower() or "dns" in error_message.lower():
+                            st.warning("""
+                            **Troubleshooting tips:**
+                            - Check if the URL is correct
+                            - Verify that the job posting is still active
+                            - Try accessing the URL in a different browser
+                            - Check your network connection
+                            - If you're behind a corporate firewall, it might be blocking access
+                            """)
+                else:
+                    # Use the primary crawl_website_sync method
+                    crawl_result = crawl_website_sync(
+                        url=input_url,
+                        excluded_tags=['form', 'header'],
+                        verbose=True
+                    )
+                    if not crawl_result.success:
+                        logger.warning(f"Failed to extract content with crawl_website_sync: {input_url}")
+                        st.warning(f"Failed to extract content with primary method: {crawl_result.error_message}")
+                        
+                        # Try with the new crawl4ai method as a fallback
+                        st.write("Trying alternative extraction method...")
+                        success, text_content, error_message = asyncio.run(extract_text_with_crawl4ai(input_url))
+                        
+                        if success:
+                            # Store the full content without truncation
+                            st.session_state['text'] = text_content
+                            st.write(f"Content length: {len(text_content)} characters")
+                            st.write("Content preview:")
+                            st.text_area("Content", value=st.session_state['text'], height=400, key="scrape_preview_area")
+                        else:
+                            st.error(f"Failed to extract content with alternative method: {error_message}")
+                            
+                            # Provide troubleshooting tips for connection errors
+                            if "connection" in error_message.lower() or "dns" in error_message.lower():
+                                st.warning("""
+                                **Troubleshooting tips:**
+                                - Check if the URL is correct
+                                - Verify that the job posting is still active
+                                - Try accessing the URL in a different browser
+                                - Check your network connection
+                                - If you're behind a corporate firewall, it might be blocking access
+                                """)
+                    else:    
+                        # Store the full content without truncation
+                        st.session_state['text'] = crawl_result.markdown
+                        st.write(f"Content length: {len(crawl_result.markdown)} characters")
+                        st.write("Content preview:")
+                        st.text_area("Content", value=st.session_state['text'], height=400, key="scrape_preview_area")
                 
             except Exception as e:
                 logger.error(f"Crawler exception for URL {input_url}: {e}", exc_info=True)
                 st.error(f"Crawler exception: {str(e)}")
+                
+                # Provide troubleshooting tips for general exceptions
+                st.warning("""
+                **Troubleshooting tips:**
+                - Check if the URL is correct
+                - Verify that the job posting is still active
+                - Try accessing the URL in a different browser
+                - Check your network connection
+                - If you're behind a corporate firewall, it might be blocking access
+                """)
 
     with st.expander("Prompts:"):
         for prompt_name, prompt in zip(st.session_state['prompt_names'], st.session_state['prompt_values']):
@@ -544,7 +753,8 @@ def main()-> None:
 
 
     with st.expander("Page content:"):
-        st.markdown(st.session_state['text'])
+        # Use text_area for better handling of large text
+        st.text_area("Content", value=st.session_state['text'], height=400, key="main_content_area")
         
     if st.sidebar.button(label="Process prompts", key="process_prompts_button") and (st.session_state['input_url'] != "") and ('chat_engine' in st.session_state):
         st.write("Processing prompts...")
@@ -559,13 +769,13 @@ def main()-> None:
                     prompt_responses = collect_prompt_responses(st.session_state['chat_engine'])
                     
                     # Write responses to file
-                    try:
-                        filename = write_responses_to_file(st.session_state['input_url'], prompt_responses)
-                        st.success(f"Responses written to: {filename}")
-                    except Exception as e:
-                        st.error(f"Failed to write responses to file: {str(e)}")
+            try:
+                filename = write_responses_to_file(st.session_state['input_url'], prompt_responses)
+                st.success(f"Responses written to: {filename}")
+            except Exception as e:
+                st.error(f"Failed to write responses to file: {str(e)}")
                     
-                    st.write("----")
+
             for prompt_name, prompt_response in prompt_responses.items():
                 st.write(f"Prompt: {prompt_name}")
                 st.write(prompt_response)

@@ -1,68 +1,50 @@
-#!/usr/bin/env python3
-"""
-Direct skills insertion test
-"""
-import sqlite3
-from typing import Dict, List, Any, Optional
-from recruitment_db import RecruitmentDatabase
+import asyncio
+from crawl4ai import AsyncWebCrawler, BrowserConfig, CrawlerRunConfig, CacheMode
+from bs4 import BeautifulSoup
 
-# Create database instance
-db = RecruitmentDatabase()
+async def main():
+    # 1. Browser config - only use supported parameters
+    browser_cfg = BrowserConfig(
+        browser_type="firefox",
+        headless=False,
+        verbose=True,
+        viewport_width=1920,
+        viewport_height=1080
+    )
 
-# URL ID to test (replace with an actual URL ID from your database)
-url_id = 585  # Change to match one of your URL IDs
+    # 2. Use a simple configuration without a specific extraction strategy
+    run_cfg = CrawlerRunConfig(
+        cache_mode=CacheMode.BYPASS,
+        word_count_threshold=1  # Very low threshold to capture all content
+    )
 
-# Test skills from your logs
-test_skills = [
-    {"skill": "voice process", "experience": None},
-    {"skill": "semi-voice process", "experience": None},
-    {"skill": "customer service", "experience": None},
-    {"skill": "operations", "experience": None}
-]
+    url = "https://acora.my.salesforce-sites.com/recruit/frecruit__applyjob?vacancyno=vn1081"
+    
+    async with AsyncWebCrawler(config=browser_cfg) as crawler:
+        print(f"Extracting text from {url}")
+        result = await crawler.arun(url=url, config=run_cfg)
+        
+        if result.success:
+            print("Extraction succeeded!")
+            print("Cleaned HTML length:", len(result.cleaned_html))
+            
+            # Use BeautifulSoup to extract text from the cleaned HTML
+            soup = BeautifulSoup(result.cleaned_html, 'html.parser')
+            
+            # Extract text from the body
+            text_content = soup.get_text(separator='\n', strip=True)
+            
+            print("\nExtracted text content:")
+            print("-" * 50)
+            print(text_content)
+            print("-" * 50)
+            
+            # Save the extracted content to a file
+            with open("extracted_text.txt", "w", encoding="utf-8") as f:
+                f.write(text_content)
+            print("\nSaved extracted text to extracted_text.txt")
+        else:
+            print("Extraction error:", result.error_message)
 
-print(f"Testing direct skill insertion for URL ID {url_id}")
-
-# First check if skills already exist
-try:
-    query = "SELECT COUNT(*) FROM skills WHERE url_id = ?"
-    with db._execute_query(query, (url_id,)) as cursor:
-        count = cursor.fetchone()[0]
-        print(f"URL ID {url_id} already has {count} skills")
-
-        if count > 0:
-            query = "SELECT skill, experience FROM skills WHERE url_id = ?"
-            with db._execute_query(query, (url_id,)) as cursor:
-                skills = cursor.fetchall()
-                print("Existing skills:")
-                for skill, exp in skills:
-                    print(f"  {skill}: {exp}")
-except Exception as e:
-    print(f"Error checking existing skills: {e}")
-
-# Direct insertion test
-success_count = 0
-for skill_data in test_skills:
-    try:
-        query = "INSERT OR IGNORE INTO skills (url_id, skill, experience) VALUES (?, ?, ?)"
-        with db._execute_query(query, (url_id, skill_data["skill"], skill_data["experience"])) as cursor:
-            if cursor.rowcount > 0:
-                success_count += 1
-                print(
-                    f"Successfully inserted skill '{skill_data['skill']}' with experience '{skill_data['experience']}'")
-            else:
-                print(f"Failed to insert skill '{skill_data['skill']}' (possibly already exists)")
-    except Exception as e:
-        print(f"Error inserting skill '{skill_data['skill']}': {e}")
-
-print(f"Successfully inserted {success_count} out of {len(test_skills)} skills")
-
-# Verify skills were inserted
-try:
-    query = "SELECT skill, experience FROM skills WHERE url_id = ?"
-    with db._execute_query(query, (url_id,)) as cursor:
-        skills = cursor.fetchall()
-        print(f"After insertion: Found {len(skills)} skills:")
-        for skill, exp in skills:
-            print(f"  {skill}: {exp}")
-except Exception as e:
-    print(f"Error verifying skills: {e}")
+if __name__ == "__main__":
+    asyncio.run(main())
