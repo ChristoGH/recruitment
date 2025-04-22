@@ -1,5 +1,3 @@
-# webcrawler
-# recruitment
 
 # Recruitment Database Schema
 
