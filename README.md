@@ -1,4 +1,3 @@
-
 # Recruitment Database Schema
 
 ## Overview
@@ -192,6 +191,17 @@ CREATE TABLE recruitment_evidence (
 );
 ```
 
+### industries
+Industry categories for jobs.
+```sql
+CREATE TABLE industries (
+    id INTEGER PRIMARY KEY,
+    name TEXT NOT NULL UNIQUE,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+);
+```
+
 ## Relationship Tables
 
 ### job_urls
@@ -208,18 +218,21 @@ CREATE TABLE job_urls (
 ```
 
 ### job_skills
-Links jobs to skills with experience levels.
+Links jobs to skills with their experience levels.
 ```sql
 CREATE TABLE job_skills (
     job_id INTEGER NOT NULL,
     skill_id INTEGER NOT NULL,
-    experience TEXT CHECK(experience IN ('entry', 'intermediate', 'senior', 'expert')),
+    experience TEXT,
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     PRIMARY KEY (job_id, skill_id),
     FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
     FOREIGN KEY (skill_id) REFERENCES skills(id) ON DELETE CASCADE
 );
 ```
+
+The `experience` field contains the years of experience required for the skill (e.g., "3+ years", "2 years", etc.). 
+If no experience level is specified, it defaults to NULL, indicating entry-level.
 
 ### job_qualifications
 Links jobs to qualifications.
@@ -362,6 +375,19 @@ CREATE TABLE url_processing_status (
     created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
     FOREIGN KEY (url_id) REFERENCES urls(id) ON DELETE CASCADE
+);
+```
+
+### job_industries
+Links jobs to their respective industries.
+```sql
+CREATE TABLE job_industries (
+    job_id INTEGER NOT NULL,
+    industry_id INTEGER NOT NULL,
+    created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+    PRIMARY KEY (job_id, industry_id),
+    FOREIGN KEY (job_id) REFERENCES jobs(id) ON DELETE CASCADE,
+    FOREIGN KEY (industry_id) REFERENCES industries(id) ON DELETE CASCADE
 );
 ```
 
@@ -589,3 +615,54 @@ If you encounter RabbitMQ connection issues:
 3. Check the logs for connection errors
 
 cat logs/url_processing_service.log | grep "Inserted"
+
+## Database Initialization Script (create_new_db.sql)
+
+The `create_new_db.sql` script is responsible for creating and initializing the recruitment database schema. It provides a complete setup of all necessary tables, relationships, and indexes.
+
+### Purpose
+- Creates a fresh database schema
+- Sets up all core tables and their relationships
+- Establishes proper constraints and foreign keys
+- Creates necessary indexes for performance optimization
+
+### Execution Flow
+1. **Table Cleanup**
+   - Drops all existing tables in reverse order of creation
+   - Ensures a clean slate for the new schema
+
+2. **Core Tables Creation**
+   - Creates fundamental tables like `urls`, `jobs`, `companies`, etc.
+   - Sets up primary keys and basic constraints
+   - Adds timestamp columns for tracking creation and updates
+
+3. **Relationship Tables Creation**
+   - Creates junction tables for many-to-many relationships
+   - Establishes foreign key constraints
+   - Ensures referential integrity
+
+4. **Index Creation**
+   - Creates indexes on frequently queried columns
+   - Optimizes performance for common operations
+
+### Usage
+The script can be executed in several ways:
+1. Directly through SQLite command-line interface:
+   ```bash
+   sqlite3 recruitment.db < create_new_db.sql
+   ```
+2. Through a Python script using SQLite connection:
+   ```python
+   import sqlite3
+   
+   conn = sqlite3.connect('recruitment.db')
+   with open('create_new_db.sql', 'r') as f:
+       conn.executescript(f.read())
+   conn.close()
+   ```
+
+### Important Notes
+- The script uses `IF NOT EXISTS` clauses to prevent errors on re-execution
+- All tables are created with proper foreign key constraints
+- Timestamps are automatically managed with `CURRENT_TIMESTAMP`
+- The script follows a specific order to handle dependencies correctly
