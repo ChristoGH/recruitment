@@ -1,12 +1,253 @@
-Metadata-Version: 2.2
+Metadata-Version: 2.4
 Name: recruitment
 Version: 0.1.0
 Summary: Add your description here
 Requires-Python: >=3.11
 Description-Content-Type: text/markdown
+Requires-Dist: aiofiles>=24.1.0
+Requires-Dist: aiohappyeyeballs>=2.4.6
+Requires-Dist: aiohttp>=3.11.13
+Requires-Dist: aiosignal>=1.3.2
+Requires-Dist: aiosqlite>=0.21.0
+Requires-Dist: annotated-types>=0.7.0
+Requires-Dist: anyio>=4.8.0
+Requires-Dist: attrs>=25.1.0
+Requires-Dist: crawl4ai>=0.5.0.post4
 Requires-Dist: dotenv>=0.9.9
+Requires-Dist: google-api-python-client>=2.162.0
 Requires-Dist: googlesearch-python>=1.3.0
+Requires-Dist: llama-index>=0.12.20
+Requires-Dist: lxml-html-clean>=0.4.1
 Requires-Dist: neo4j>=5.28.1
+Requires-Dist: newspaper3k>=0.2.8
 Requires-Dist: pandas>=2.2.3
 Requires-Dist: pip>=25.0.1
+Requires-Dist: plotly>=6.0.1
+Requires-Dist: pydantic[email]>=2.10.6
+Requires-Dist: pytest>=8.3.5
+Requires-Dist: readability-lxml>=0.8.1
+Requires-Dist: selenium>=4.29.0
+Requires-Dist: statsmodels>=0.14.4
+Requires-Dist: streamlit>=1.44.1
 Requires-Dist: tldextract>=5.1.3
+
+# Recruitment System
+
+A distributed system for discovering and processing recruitment advertisements using FastAPI, RabbitMQ, and SQLite.
+
+## System Architecture
+
+The system consists of two main services:
+
+1. **URL Discovery Service** (`url_discovery_service.py`)
+   - Searches for recruitment URLs using Google Search
+   - Filters and validates URLs
+   - Publishes valid URLs to RabbitMQ queue
+   - Runs on port 8000
+
+2. **URL Processing Service** (`url_processing_service.py`)
+   - Consumes URLs from RabbitMQ queue
+   - Crawls and extracts content from URLs
+   - Uses LLMs to analyze and extract structured data
+   - Stores results in SQLite database
+   - Runs on port 8001
+
+### Database Schema
+
+The system uses a SQLite database (`recruitment.db`) with the following main tables:
+
+- `urls`: Stores crawled URLs and their processing status
+- `jobs`: Core job information
+- `adverts`: Job advertisement details
+- `companies`: Hiring organizations
+- `agencies`: Recruitment firms
+- `skills`: Required skills with experience levels
+- `qualifications`: Required qualifications
+- `attributes`: Job attributes
+- `duties`: Job responsibilities
+- `locations`: Geographic locations
+- `benefits`: Job benefits
+- `industries`: Industry categories
+
+## Prerequisites
+
+- Python 3.11+
+- Docker and Docker Compose
+- OpenAI API key
+- Neo4j database (optional)
+
+## Environment Variables
+
+Create a `.env` file with the following variables:
+
+```env
+OPENAI_API_KEY=your_api_key
+NEO4J_URL=bolt://localhost:7687
+NEO4J_USER=neo4j
+NEO4J_PWD=password
+```
+
+## Installation
+
+1. Clone the repository:
+```bash
+git clone https://github.com/yourusername/recruitment.git
+cd recruitment
+```
+
+2. Build and start the services:
+```bash
+docker-compose up --build
+```
+
+## Usage
+
+### URL Discovery Service (Port 8000)
+
+1. Create a new search for recruitment URLs:
+```bash
+curl -X POST "http://localhost:8000/search" \
+-H "Content-Type: application/json" \
+-d '{
+  "id": "batch1",
+  "days_back": 7,
+  "excluded_domains": [],
+  "academic_suffixes": [],
+  "recruitment_terms": [
+    "recruitment advert",
+    "job vacancy",
+    "hiring now",
+    "employment opportunity",
+    "career opportunity",
+    "job advertisement",
+    "recruitment drive"
+  ]
+}'
+```
+
+2. Check search status:
+```bash
+curl "http://localhost:8000/search/status/test_search"
+```
+
+3. Get URLs found by a search:
+```bash
+curl "http://localhost:8000/search/urls/test_search"
+```
+
+### URL Processing Service (Port 8001)
+
+1. Process a single URL:
+```bash
+curl -X POST "http://localhost:8001/process" \
+-H "Content-Type: application/json" \
+-d '{
+  "url": "https://example.com/job-posting",
+  "process_all_prompts": true,
+  "use_transaction": true
+}'
+```
+
+2. Check URL processing status:
+```bash
+curl "http://localhost:8001/status/https://example.com/job-posting"
+```
+
+### Monitoring
+
+1. View service logs:
+```bash
+docker-compose logs url_discovery
+docker-compose logs url_processing
+```
+
+2. Check service health:
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8001/health
+```
+
+3. Access RabbitMQ management interface:
+   - URL: `http://localhost:15672`
+   - Default credentials: guest/guest
+
+4. View database contents:
+```bash
+sqlite3 databases/recruitment.db
+```
+
+## Testing
+
+Run the test suite:
+
+```bash
+pytest tests/
+```
+
+The test suite includes:
+- Unit tests for URL discovery service
+- Unit tests for URL processing service
+- Unit tests for database operations
+- Integration tests for the complete pipeline
+
+## Development
+
+### Adding New Features
+
+1. Create a new branch:
+```bash
+git checkout -b feature/your-feature-name
+```
+
+2. Make your changes and run tests:
+```bash
+pytest tests/
+```
+
+3. Update documentation if needed
+
+4. Create a pull request
+
+### Code Style
+
+- Follow PEP 8 guidelines
+- Use type hints
+- Write docstrings for all functions and classes
+- Keep functions small and focused
+
+## Troubleshooting
+
+1. Check service logs:
+```bash
+docker-compose logs url_discovery
+docker-compose logs url_processing
+```
+
+2. Verify RabbitMQ connection:
+```bash
+curl http://localhost:8000/health
+curl http://localhost:8001/health
+```
+
+3. Check database:
+```bash
+sqlite3 databases/recruitment.db
+```
+
+4. Common issues:
+   - Ensure all environment variables are set correctly
+   - Verify RabbitMQ is running and accessible
+   - Check database permissions and path
+   - Monitor OpenAI API rate limits
+
+## License
+
+MIT License
+
+## Contributing
+
+1. Fork the repository
+2. Create your feature branch
+3. Commit your changes
+4. Push to the branch
+5. Create a new Pull Request

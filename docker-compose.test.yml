@@ -1,0 +1,34 @@
+services:
+  queue_test:
+    build:
+      context: .
+      dockerfile: Dockerfile.test
+    depends_on:
+      rabbitmq:
+        condition: service_healthy
+    networks:
+      - recruitment_network
+    volumes:
+      - ./logs:/app/logs    # Mount the same logs directory
+
+  rabbitmq:
+    image: rabbitmq:3-management
+    ports:
+      - "5672:5672"
+      - "15672:15672"
+    volumes:
+      - rabbitmq_data:/var/lib/rabbitmq
+    networks:
+      - recruitment_network
+    healthcheck:
+      test: ["CMD", "rabbitmq-diagnostics", "check_port_connectivity"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+
+volumes:
+  rabbitmq_data:
+
+networks:
+  recruitment_network:
+    driver: bridge 

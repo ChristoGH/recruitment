@@ -64,11 +64,16 @@ COPY recruitment_models.py .
 COPY response_processor_functions.py .
 COPY batch_processor.py .
 COPY web_crawler_lib.py .
-COPY recruitment_db.py .
 COPY utils.py .
+COPY recruitment ./recruitment
 
 # Create logs and data directories
-RUN mkdir -p /app/logs /data
+RUN mkdir -p /app/logs /data /app/databases && \
+    touch /app/databases/recruitment.db && \
+    chmod 666 /app/databases/recruitment.db
+
+# Add /app and /app/recruitment to PYTHONPATH
+ENV PYTHONPATH=/app:/app/recruitment
 
 # Expose port
 EXPOSE 8001

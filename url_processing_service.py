@@ -29,7 +29,7 @@ from contextlib import asynccontextmanager
 # Local imports
 from recruitment_models import transform_skills_response
 from prompts import COMPLEX_PROMPTS, LIST_PROMPTS, NON_LIST_PROMPTS
-from recruitment_db import DatabaseError, RecruitmentDatabase
+from recruitment.recruitment_db import DatabaseError, RecruitmentDatabase
 from recruitment_models import (AgencyResponse, AttributesResponse, BenefitsResponse,
                                 CompanyResponse, ConfirmResponse, ContactPersonResponse,
                                 EmailResponse, JobAdvertResponse, JobResponse,
@@ -541,8 +541,8 @@ def process_url(url: str, process_all_prompts: bool = True, use_transaction: boo
             )
 
             # Verify if this is a recruitment advert
-            recruitment_type, evidence = verify_recruitment(url, chat_engine)
-            recruitment_flag = recruitment_type.get("recruitment_flag", -1)
+            recruitment_result, evidence = verify_recruitment(url, chat_engine)
+            recruitment_flag = recruitment_result["recruitment_flag"]
 
             # If not a recruitment advert and not processing all prompts, stop here
             if recruitment_flag == 0 and not process_all_prompts:

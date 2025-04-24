@@ -1,7 +1,7 @@
 # Enhanced models.py with Pydantic V2 validation
 
 from typing import List, Optional, Literal, Dict, Any, Tuple, Union
-from pydantic import BaseModel, Field, field_validator, EmailStr, model_validator
+from pydantic import BaseModel, Field, field_validator, EmailStr, model_validator, ConfigDict
 import re
 import logging
 from datetime import datetime
@@ -13,6 +13,7 @@ logger = setup_logging("recruitment_models")
 
 
 class AdvertResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     answer: Literal["yes", "no"]  # Restrict to only valid values
     evidence: Optional[List[str]] = None
 
@@ -25,11 +26,13 @@ class AdvertResponse(BaseModel):
 
 
 class ConfirmResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     answer: Literal["yes", "no"]
     evidence: Optional[List[str]] = None
 
 
 class JobResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     title: Optional[str] = Field(None, min_length=2, max_length=200)
     description: Optional[str] = None
     salary_min: Optional[float] = None
@@ -39,6 +42,7 @@ class JobResponse(BaseModel):
 
 
 class LocationResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     country: Optional[str] = Field(None, min_length=2, max_length=100)
     province: Optional[str] = Field(None, max_length=100)
     city: Optional[str] = Field(None, max_length=100)
@@ -46,6 +50,7 @@ class LocationResponse(BaseModel):
 
 
 class ContactPersonResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     contacts: Optional[List[str]] = None
 
     @field_validator('contacts')
@@ -59,6 +64,7 @@ class ContactPersonResponse(BaseModel):
 
 
 class SkillsResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     skills: Optional[List[str]] = None
 
     @field_validator('skills')
@@ -71,6 +77,7 @@ class SkillsResponse(BaseModel):
 
 # Updated SkillExperience class with optional experience field
 class SkillExperience(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     skill: str
     experience: Optional[str] = None
 
@@ -89,6 +96,7 @@ class SkillExperience(BaseModel):
 
 # Updated SkillExperienceResponse with flexible input handling
 class SkillExperienceResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     skills: Optional[List[Union[SkillExperience, Dict, List, Tuple, str]]] = None
 
     @model_validator(mode='after')
@@ -134,6 +142,7 @@ class SkillExperienceResponse(BaseModel):
 
 
 class AttributesResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     attributes: Optional[List[str]] = None
 
     @field_validator('attributes')
@@ -145,14 +154,17 @@ class AttributesResponse(BaseModel):
 
 
 class AgencyResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     agency: Optional[str] = Field(None, min_length=2, max_length=200)
 
 
 class CompanyResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     company: Optional[str] = Field(None, min_length=2, max_length=200)
 
 
 class IndustryResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     industry: Optional[str] = Field(None, min_length=2, max_length=200)
 
     @field_validator('industry')
@@ -166,6 +178,7 @@ class IndustryResponse(BaseModel):
 
 
 class BenefitsResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     benefits: Optional[List[str]] = None
 
     @field_validator('benefits')
@@ -177,6 +190,7 @@ class BenefitsResponse(BaseModel):
 
 
 class DutiesResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     duties: Optional[List[str]] = None
 
     @field_validator('duties')
@@ -188,6 +202,7 @@ class DutiesResponse(BaseModel):
 
 
 class QualificationsResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     qualifications: Optional[List[str]] = None
 
     @field_validator('qualifications')
@@ -199,67 +214,42 @@ class QualificationsResponse(BaseModel):
 
 
 class LinkResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     link: Optional[str] = None
 
     @field_validator('link')
     @classmethod
     def validate_link(cls, v):
-        if v:
-            # Add protocol if missing
-            if v and not (v.startswith('http://') or v.startswith('https://')):
-                v = f'https://{v}'
-                
-            # Simple URL validation
-            url_pattern = re.compile(
-                r'^(?:http|ftp)s?://'  # http:// or https://
-                r'(?:(?:[A-Z0-9](?:[A-Z0-9-]{0,61}[A-Z0-9])?\.)+(?:[A-Z]{2,6}\.?|[A-Z0-9-]{2,}\.?)|'  # domain
-                r'localhost|'  # localhost
-                r'\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})'  # or IP
-                r'(?::\d+)?'  # optional port
-                r'(?:/?|[/?]\S+)$', re.IGNORECASE)
-
-            if not url_pattern.match(v):
-                raise ValueError('Invalid URL format')
+        if v is not None:
+            v = v.strip()
+            if not v.startswith(('http://', 'https://')):
+                v = 'https://' + v
         return v
 
 
 class EmailResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     email: Optional[EmailStr] = None  # Using EmailStr for email validation
     type: Optional[str] = "primary"  # Default to primary if not specified
 
 
 class CompanyPhoneNumberResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     number: Optional[str] = None
 
     @field_validator('number')
     @classmethod
     def validate_phone(cls, v):
-        if v:
-            # Remove common separators for validation, allowing + for international format
-            clean_number = re.sub(r'[\s\-\(\)\.]', '', v)
-
-            # If there's a plus at the beginning, handle it specially
-            if clean_number.startswith('+'):
-                # Remove the plus for the digit check
-                digit_part = clean_number[1:]
-                if not digit_part.isdigit():
-                    raise ValueError('Phone number should contain only digits, spaces, and common separators')
-
-                # Check reasonable length for international numbers (including country code)
-                if len(clean_number) < 8 or len(clean_number) > 16:
-                    raise ValueError('Phone number length is invalid')
-            else:
-                # Check if it's all digits after cleaning
-                if not clean_number.isdigit():
-                    raise ValueError('Phone number should contain only digits, spaces, and common separators')
-
-                # Check reasonable length
-                if len(clean_number) < 7 or len(clean_number) > 15:
-                    raise ValueError('Phone number length is invalid')
+        if v is not None:
+            # Remove all non-digit characters
+            v = re.sub(r'\D', '', v)
+            if len(v) < 10:
+                raise ValueError("Phone number must be at least 10 digits")
         return v
 
 
 class JobAdvertResponse(BaseModel):
+    model_config = ConfigDict(extra='forbid')
     description: Optional[str] = None
     salary: Optional[str] = None
     duration: Optional[str] = None

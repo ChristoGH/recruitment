@@ -160,10 +160,34 @@ async def publish_urls_to_queue(urls: List[str], search_id: str):
 
 # URL validation
 def is_valid_url(url: str) -> bool:
-    """Validate URL format and structure."""
+    """
+    Validate if a URL is valid and meets our requirements.
+    
+    Args:
+        url (str): The URL to validate
+        
+    Returns:
+        bool: True if the URL is valid, False otherwise
+    """
     try:
         result = urlparse(url)
-        return all([result.scheme, result.netloc])
+        # Check if URL has a scheme and netloc
+        if not all([result.scheme, result.netloc]):
+            return False
+            
+        # Only allow http and https schemes
+        if result.scheme not in ['http', 'https']:
+            return False
+            
+        # Check if URL is too long (arbitrary limit of 2000 characters)
+        if len(url) > 2000:
+            return False
+            
+        # Check if URL contains any invalid characters
+        if not all(ord(c) < 128 for c in url):
+            return False
+            
+        return True
     except Exception:
         return False
 

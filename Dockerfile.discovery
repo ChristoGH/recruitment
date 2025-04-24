@@ -32,11 +32,14 @@ COPY libraries ./libraries
 COPY prompts.py .
 COPY recruitment_models.py .
 COPY search-cron /etc/cron.d/search-cron
+COPY utils.py .
+COPY recruitment ./recruitment
 
 # Create logs directory and set up log files
-RUN mkdir -p /app/logs && \
+RUN mkdir -p /app/logs /app/databases && \
     touch /app/logs/startup.log /app/logs/url_discovery_service.log /app/logs/cron.log && \
-    chmod 666 /app/logs/*.log && \
+    touch /app/databases/recruitment.db && \
+    chmod 666 /app/logs/*.log /app/databases/recruitment.db && \
     chmod 0644 /etc/cron.d/search-cron
 
 # Expose port
